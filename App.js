@@ -168,8 +168,8 @@ let AADS_CONFIG = {
 // Tant qu elles sont vides, le portail affiche un avertissement et ne se
 // connecte a aucune base. C est voulu : evite d ecrire chez un autre client.
 // ============================================================
-const SUPABASE_URL = "";
-const SUPABASE_KEY = "";
+const SUPABASE_URL = "https://azsqlbwqpqedggnrmoto.supabase.co/rest/v1/";
+const SUPABASE_KEY = "sb_publishable_QQ4ZkTDsk1QhQbFg-OM2jA_Juqtic_S";
 
 // ============================================================
 // MULTI-SITES
