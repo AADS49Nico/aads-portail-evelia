@@ -168,7 +168,7 @@ let AADS_CONFIG = {
 // Tant qu elles sont vides, le portail affiche un avertissement et ne se
 // connecte a aucune base. C est voulu : evite d ecrire chez un autre client.
 // ============================================================
-const SUPABASE_URL = "https://azsqlbwqpqedggnrmoto.supabase.co/rest/v1/";
+const SUPABASE_URL = "https://azsqlbwqpqedggnrmoto.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6c3FsYndxcHFlZGdnbnJtb3RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0ODQ5MTMsImV4cCI6MjEwMDA2MDkxM30.N8VDlZspzGCy2sp6dNd8qXkx35eQfyU29DUNUIZvHvA";
 
 // ============================================================
