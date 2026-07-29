@@ -168,8 +168,8 @@ let AADS_CONFIG = {
 // Tant qu elles sont vides, le portail affiche un avertissement et ne se
 // connecte a aucune base. C est voulu : evite d ecrire chez un autre client.
 // ============================================================
-const SUPABASE_URL = "";
-const SUPABASE_KEY = "";
+const SUPABASE_URL = "https://azsqlbwqpqedggnrmoto.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6c3FsYndxcHFlZGdnbnJtb3RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0ODQ5MTMsImV4cCI6MjEwMDA2MDkxM30.N8VDlZspzGCy2sp6dNd8qXkx35eQfyU29DUNUIZvHvA";
 
 // ============================================================
 // MULTI-SITES
@@ -846,21 +846,25 @@ const PAGES_AVEC_SITE = ["dashboard","implantation","interventions","saisiepassa
 // de config_client (forceConfigUpdate s en charge).
 function SiteSwitcher({ compact }) {
   if (SITES_DISPO.length <= 1) return null;
-  const taille = compact ? 10 : 11;
-  const marge = compact ? "3px 8px" : "4px 11px";
+  const taille = compact ? 11 : 12;
+  // Retour a la ligne autorise : sur mobile les sites s empilent au lieu de
+  // deborder hors ecran (ce qui les rendait invisibles et non cliquables).
+  // Boutons dimensionnes pour etre attrapables au doigt (min 34px de haut).
   return (
-    <div style={{ display:"inline-flex", alignItems:"center", gap:2, background:"#243352",
-      border:"1px solid #3d5270", borderRadius:8, padding:2 }}>
+    <div style={{ display:"flex", flexWrap:"wrap", alignItems:"center", justifyContent:"center",
+      gap:5, background:"#243352", border:"1px solid #3d5270", borderRadius:10, padding:5,
+      maxWidth:"100%", boxSizing:"border-box" }}>
       {SITES_DISPO.map(s => {
         var actif = s.id === SITE_ACTIF;
         return (
           <button key={s.id} onClick={()=>{ if (!actif) changerSite(s.id); }}
             title={actif ? "Site affiche" : "Basculer sur " + s.site}
-            style={{ background: actif ? "#1d4ed8" : "transparent",
-                     color: actif ? "#fff" : "#94a3b8",
-                     border:"none", borderRadius:6, padding:marge, fontSize:taille,
+            style={{ background: actif ? "#1d4ed8" : "#1a2540",
+                     color: actif ? "#fff" : "#cbd5e1",
+                     border:"1px solid " + (actif ? "#3b82f6" : "#3d5270"),
+                     borderRadius:8, padding:"8px 14px", fontSize:taille, minHeight:34,
                      fontWeight: actif ? 700 : 600, cursor: actif ? "default" : "pointer",
-                     fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                     fontFamily:"inherit", whiteSpace:"nowrap", touchAction:"manipulation" }}>
             {s.site}
           </button>
         );
@@ -14397,8 +14401,8 @@ function AppPortail({ isAdmin, onLogout }) {
         {/* MAIN */}
         <main ref={mainRef} style={{ flex: 1, padding: "32px 36px", overflowY: "auto", position:"relative" }}>
           {page !== "dashboard" && PAGES_AVEC_SITE.indexOf(page) >= 0 && (
-            <div style={{ position:"absolute", top:12, left:0, right:0, zIndex:9, display:"flex", justifyContent:"center", pointerEvents:"none" }}>
-              <div style={{ pointerEvents:"auto" }}><SiteSwitcher/></div>
+            <div style={{ position:"absolute", top:12, left:8, right:52, zIndex:9, display:"flex", justifyContent:"center", pointerEvents:"none" }}>
+              <div style={{ pointerEvents:"auto", maxWidth:"100%" }}><SiteSwitcher/></div>
             </div>
           )}
           <div style={{ position:"absolute", top:12, right:16, zIndex:10 }}>
