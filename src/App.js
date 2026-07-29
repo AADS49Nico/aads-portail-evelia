@@ -168,7 +168,7 @@ let AADS_CONFIG = {
 // Tant qu elles sont vides, le portail affiche un avertissement et ne se
 // connecte a aucune base. C est voulu : evite d ecrire chez un autre client.
 // ============================================================
-const SUPABASE_URL = "https://azsqlbwqpqedggnrmoto.supabase.co";
+const SUPABASE_URL = "https://azsqlbwqpqedggnrmoto.supabase.c";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6c3FsYndxcHFlZGdnbnJtb3RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0ODQ5MTMsImV4cCI6MjEwMDA2MDkxM30.N8VDlZspzGCy2sp6dNd8qXkx35eQfyU29DUNUIZvHvA";
 
 // ============================================================
@@ -11520,10 +11520,40 @@ function PlanImplantation({ seuilsGlobaux }) {
   const [nuisiblesMasques, setNuisiblesMasques] = useState(()=>{
     try { const s = localStorage.getItem("aads_nuisibles_masques"); return s ? JSON.parse(s) : []; } catch(e) { return []; }
   });
+  // Ecrit les 3 reglages d affichage dans Supabase (config_logos.affichage_pastilles),
+  // pour qu ils soient communs a tous les appareils et tous les techniciens.
+  // Le localStorage reste utilise comme cache pour un affichage instantane.
+  function sauverAffichage(formes, couleurs, masques) {
+    var payload = { formes: formes, couleurs: couleurs, masques: masques };
+    // PATCH cible : ne modifie QUE affichage_pastilles, sans toucher au logo
+    // (banner_url) ni aux autres colonnes de la ligne config_logos.
+    sbFetch("config_logos?id=eq.main", "PATCH", { affichage_pastilles: payload }, { Prefer: "return=representation" })
+      .then(function(r){
+        // Si la ligne main n existe pas encore, la creer avec le reglage.
+        if (!r || (Array.isArray(r) && r.length === 0)) {
+          sbFetch("config_logos", "POST", { id: "main", affichage_pastilles: payload }, { Prefer: "resolution=merge-duplicates" }).catch(function(){});
+        }
+      }).catch(function(){});
+  }
+
+  // Au demarrage : charger les reglages depuis Supabase. S ils existent, ils
+  // priment sur le cache local et sont appliques aux 3 states.
+  useEffect(function() {
+    sbFetch("config_logos?id=eq.main", "GET").then(function(data) {
+      if (data && data.length > 0 && data[0].affichage_pastilles) {
+        var a = data[0].affichage_pastilles;
+        if (a.formes) { setPosteFormes({...POSTE_FORMES_DEFAUT, ...a.formes}); try { localStorage.setItem("aads_poste_formes", JSON.stringify(a.formes)); } catch(_e) {} }
+        if (a.couleurs) { setNuisibleColors({...NUISIBLE_COLORS, ...a.couleurs}); try { localStorage.setItem("aads_nuisible_colors", JSON.stringify(a.couleurs)); } catch(_e) {} }
+        if (a.masques) { setNuisiblesMasques(a.masques); try { localStorage.setItem("aads_nuisibles_masques", JSON.stringify(a.masques)); } catch(_e) {} }
+      }
+    }).catch(function(){});
+  }, []);
+
   function toggleNuisibleMasque(cle) {
     setNuisiblesMasques(prev=>{
       var next = prev.indexOf(cle)>=0 ? prev.filter(x=>x!==cle) : prev.concat([cle]);
       try { localStorage.setItem("aads_nuisibles_masques", JSON.stringify(next)); } catch(_e) {}
+      sauverAffichage(posteFormes, nuisibleColors, next);
       return next;
     });
   }
@@ -11531,12 +11561,14 @@ function PlanImplantation({ seuilsGlobaux }) {
   function setNuisibleColor(nuisible, color) {
     const next = {...nuisibleColors, [nuisible]: color};
     setNuisibleColors(next);
-    try { localStorage.setItem("aads_nuisible_colors", JSON.stringify(next)); } catch(_e) { return; }
+    try { localStorage.setItem("aads_nuisible_colors", JSON.stringify(next)); } catch(_e) {}
+    sauverAffichage(posteFormes, next, nuisiblesMasques);
   }
   function setPosteForme(categorie, forme) {
     const next = {...posteFormes, [categorie]: forme};
     setPosteFormes(next);
-    try { localStorage.setItem("aads_poste_formes", JSON.stringify(next)); } catch(_e) { return; }
+    try { localStorage.setItem("aads_poste_formes", JSON.stringify(next)); } catch(_e) {}
+    sauverAffichage(next, nuisibleColors, nuisiblesMasques);
   }
   // Rend une pastille de poste dans la forme voulue, couleur pilotee par le mode.
   // Le label est centre par-dessus. isHov agrandit legerement au survol.
