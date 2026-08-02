@@ -13682,8 +13682,16 @@ function ParametresModal({ onClose }) {
     CLIENT_CONFIG.contact2_tel = form.contact2_tel;
     CLIENT_CONFIG.certifications = certifications;
 
-    await sbUpsert("config_client", {
-      id: "main",
+    // Ecriture directe (POST merge) SANS passer par sbUpsert : la ligne config_client
+    // id:main est la config GLOBALE du client, pas une donnee liee a un site. Passer
+    // par sbUpsert exigerait un site actif (garde-fou anti-orphelin) et bloquerait la
+    // premiere configuration d un portail neuf, ou aucun site n existe encore.
+    // Ecrire dans la ligne du site actif : c est celle que le demarrage relit.
+    // Une ligne "main" separee serait ignoree au rechargement (la config semblerait
+    // perdue) et apparaitrait comme un faux site dans le selecteur.
+    var idCible = SITE_ACTIF || form.site || "main";
+    var payload = {
+      id: idCible,
       nom: form.nom,
       contrat: form.contrat,
       site: form.site,
@@ -13702,11 +13710,24 @@ function ParametresModal({ onClose }) {
       contact2_mail: form.contact2_mail,
       contact2_tel: form.contact2_tel,
       certifications: JSON.stringify(certifications),
-    });
-
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    };
+    try {
+      await sbFetch("config_client", "POST", payload, { Prefer: "resolution=merge-duplicates,return=representation" });
+      setSaving(false);
+      setSaved(true);
+      // Portail neuf : si aucun site n etait actif, la config vient de creer le
+      // premier site. On le fixe comme actif et on recharge pour que tout le
+      // portail (donnees, selecteur) parte sur ce site.
+      if (!SITE_ACTIF && idCible) {
+        try { window.localStorage.setItem("aads_site_actif", idCible); } catch(_e) {}
+        setTimeout(function(){ window.location.reload(); }, 600);
+        return;
+      }
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setSaving(false);
+      alert("Echec de l enregistrement de la configuration client. Detail : " + (err && err.message ? err.message : err));
+    }
   }
 
   const inpStyle = { background:"#243352", border:"1px solid #3d5270", borderRadius:8, padding:"9px 12px", color:"#f1f5f9", fontSize:13, fontFamily:"inherit", width:"100%" };
