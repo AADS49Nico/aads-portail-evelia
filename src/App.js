@@ -14431,22 +14431,22 @@ function AppPortail({ isAdmin, onLogout }) {
         )}
 
         {/* MAIN */}
-        <main ref={mainRef} style={{ flex: 1, padding: "32px 36px", overflowY: "auto", position:"relative" }}>
-          {page !== "dashboard" && PAGES_AVEC_SITE.indexOf(page) >= 0 && (
-            <div style={{ position:"absolute", top:12, left:8, right:52, zIndex:9, display:"flex", justifyContent:"center", pointerEvents:"none" }}>
-              <div style={{ pointerEvents:"auto", maxWidth:"100%" }}><SiteSwitcher/></div>
+        <main ref={mainRef} style={{ flex: 1, padding: "12px 20px 32px", overflowY: "auto", position:"relative" }}>
+          {/* Barre superieure DANS le flux : pousse le contenu au lieu de le recouvrir.
+              Bouton menu a gauche, selecteur de site au centre, rafraichir a droite. */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+            <button onClick={()=>{setSidebarVisible(v=>{const next=!v;try{localStorage.setItem("aads_sidebar_visible",String(next));}catch(e){}return next;});}} title={sidebarVisible?"Masquer le menu":"Afficher le menu"}
+              style={{ flexShrink:0, background:"#243352", border:"1px solid #3d5270", borderRadius:7, color:"#94a3b8", fontSize:14, cursor:"pointer", padding:"7px 11px", lineHeight:1 }}>
+              {sidebarVisible ? "◀" : "▶"}
+            </button>
+            <div style={{ flex:1, display:"flex", justifyContent:"center", minWidth:0 }}>
+              {page !== "dashboard" && PAGES_AVEC_SITE.indexOf(page) >= 0 && <SiteSwitcher/>}
             </div>
-          )}
-          <div style={{ position:"absolute", top:12, right:16, zIndex:10 }}>
             <button onClick={()=>window.location.reload()} title="Rafraîchir les données"
-              style={{ background:"#243352", border:"1px solid #3d5270", borderRadius:7, color:"#7a90aa", fontSize:14, cursor:"pointer", padding:"4px 10px", lineHeight:1, fontWeight:700 }}>
+              style={{ flexShrink:0, background:"#243352", border:"1px solid #3d5270", borderRadius:7, color:"#7a90aa", fontSize:15, cursor:"pointer", padding:"7px 11px", lineHeight:1, fontWeight:700 }}>
               ↻
             </button>
           </div>
-          <button onClick={()=>{setSidebarVisible(v=>{const next=!v;try{localStorage.setItem("aads_sidebar_visible",String(next));}catch(e){}return next;});}} title={sidebarVisible?"Masquer le menu":"Afficher le menu"}
-            style={{ position:"absolute", top:8, left:8, zIndex:50, background:"#243352", border:"1px solid #3d5270", borderRadius:7, color:"#94a3b8", fontSize:14, cursor:"pointer", padding:"4px 9px", lineHeight:1 }}>
-            {sidebarVisible ? "◀" : "▶"}
-          </button>
           {!isAdmin && (
             <>
             <style>{`.aads-action-btn { opacity: 0.35 !important; pointer-events: none !important; cursor: not-allowed !important; }`}</style>
