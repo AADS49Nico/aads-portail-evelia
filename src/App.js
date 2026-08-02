@@ -14425,16 +14425,16 @@ function AppPortail({ isAdmin, onLogout }) {
         <main ref={mainRef} style={{ flex: 1, padding: "12px 20px 32px", overflowY: "auto", position:"relative" }}>
           {/* Barre superieure DANS le flux : pousse le contenu au lieu de le recouvrir.
               Bouton menu a gauche, selecteur de site au centre, rafraichir a droite. */}
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
             <button onClick={()=>{setSidebarVisible(v=>{const next=!v;try{localStorage.setItem("aads_sidebar_visible",String(next));}catch(e){}return next;});}} title={sidebarVisible?"Masquer le menu":"Afficher le menu"}
               style={{ flexShrink:0, background:"#243352", border:"1px solid #3d5270", borderRadius:7, color:"#94a3b8", fontSize:14, cursor:"pointer", padding:"7px 11px", lineHeight:1 }}>
               {sidebarVisible ? "◀" : "▶"}
             </button>
-            <div style={{ flex:1, display:"flex", justifyContent:"center", minWidth:0 }}>
-              {page !== "dashboard" && PAGES_AVEC_SITE.indexOf(page) >= 0 && <SiteSwitcher/>}
-            </div>
+            {page !== "dashboard" && PAGES_AVEC_SITE.indexOf(page) >= 0 && (
+              <div style={{ flexShrink:1, minWidth:0 }}><SiteSwitcher/></div>
+            )}
             <button onClick={()=>window.location.reload()} title="Rafraîchir les données"
-              style={{ flexShrink:0, background:"#243352", border:"1px solid #3d5270", borderRadius:7, color:"#7a90aa", fontSize:15, cursor:"pointer", padding:"7px 11px", lineHeight:1, fontWeight:700 }}>
+              style={{ flexShrink:0, marginLeft:"auto", background:"#243352", border:"1px solid #3d5270", borderRadius:7, color:"#7a90aa", fontSize:15, cursor:"pointer", padding:"7px 11px", lineHeight:1, fontWeight:700 }}>
               ↻
             </button>
           </div>
