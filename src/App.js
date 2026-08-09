@@ -727,7 +727,11 @@ export function couleurSeuilPoste(p, s, seuils) {
   const sr = seuils.rongeurs || {};
   if (nuisible === "Rongeurs") {
     const total = (parseInt(s.cap_souris||0))+(parseInt(s.cap_ratBrun||0))+(parseInt(s.cap_ratNoir||0));
-    if ((sr.capture_rouge && total >= sr.capture_rouge) || estConsoTotale(s.etat) || s.etat==="75%") return "rouge";
+    // capture_rouge par defaut = 1 (comme le reglage par defaut du portail) :
+    // une seule capture suffit a passer le poste en rouge, meme si le seuil
+    // n a pas ete charge/configure. Sinon un poste a captures restait vert.
+    const capRouge = (sr.capture_rouge !== undefined && sr.capture_rouge !== null) ? sr.capture_rouge : 1;
+    if ((total > 0 && total >= capRouge) || estConsoTotale(s.etat) || s.etat==="75%") return "rouge";
     if (estConsoPartielle(s.etat)) return "orange";
     return "vert";
   }
@@ -7050,6 +7054,9 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
   function deletePassage(id) {
     setPrevPassagesData(passagesData);
     setPassagesData(prev=>prev.filter(p=>String(p.id)!==String(id)));
+    // Synchroniser l etat global : sinon le passage reste visible dans le suivi
+    // et le tableau de bord, qui lisent passagesGlobaux.
+    if (typeof setPassagesGlobaux === "function") setPassagesGlobaux(prev=>prev.filter(p=>String(p.id)!==String(id)));
     sbDelete("passages", id);
   }
 
