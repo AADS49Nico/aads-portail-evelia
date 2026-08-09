@@ -717,6 +717,49 @@ export function estConsoQuelconque(v) {
   return estConsoTotale(v) || estConsoPartielle(v);
 }
 
+// Couleur d un poste selon son type et ses seuils (meme logique que les pastilles
+// du plan) : "rouge" (seuil critique), "orange" (seuil vigilance) ou "vert".
+// s = saisie du poste, p = poste (pour connaitre le nuisible), seuils = seuils globaux.
+export function couleurSeuilPoste(p, s, seuils) {
+  if (!p || !s || !seuils) return "vert";
+  const CATS_IV = ["Moucherons","Mouches","Moustiques","Hyménoptères","Lépidoptères","Coléoptères","Punaises","Tipules"];
+  const nuisible = p.nuisible || "Rongeurs";
+  const sr = seuils.rongeurs || {};
+  if (nuisible === "Rongeurs") {
+    const total = (parseInt(s.cap_souris||0))+(parseInt(s.cap_ratBrun||0))+(parseInt(s.cap_ratNoir||0));
+    if ((sr.capture_rouge && total >= sr.capture_rouge) || estConsoTotale(s.etat) || s.etat==="75%") return "rouge";
+    if (estConsoPartielle(s.etat)) return "orange";
+    return "vert";
+  }
+  if (nuisible === "Blattes") { const v=parseInt(s.etat||0); const b=seuils.blattes||{}; return v>=b.moyen?"rouge":v>=b.leger?"orange":"vert"; }
+  if (nuisible === "Teignes") { const v=parseInt(s.etat||0); const t=seuils.teignes||{}; return v>=t.moyen?"rouge":v>=t.leger?"orange":"vert"; }
+  if (nuisible === "IPS")     { const v=parseInt(s.etat||0); const i=seuils.ips||{};     return v>=i.moyen?"rouge":v>=i.leger?"orange":"vert"; }
+  if (nuisible === "Insectes volants") {
+    let max = 0;
+    CATS_IV.forEach(function(cat){
+      const v = parseInt(s["iv_"+cat]||0);
+      const sv = (seuils.iv||{})[cat] || {leger:999,moyen:9999};
+      if (v>=sv.moyen) max = Math.max(max,2); else if (v>=sv.leger) max = Math.max(max,1);
+    });
+    return max===2?"rouge":max===1?"orange":"vert";
+  }
+  return "vert";
+}
+
+// Compte les postes rouge/orange d un passage, tous types confondus.
+export function compteSeuils(passage, postes, seuils) {
+  const saisies = typeof passage.saisies === "string" ? JSON.parse(passage.saisies||"{}") : (passage.saisies||{});
+  const parId = {};
+  (postes||[]).forEach(function(p){ parId[p.id] = p; });
+  let rouge = 0, orange = 0;
+  Object.keys(saisies).forEach(function(pid){
+    const p = parId[pid]; if (!p) return;
+    const c = couleurSeuilPoste(p, saisies[pid], seuils);
+    if (c === "rouge") rouge++; else if (c === "orange") orange++;
+  });
+  return { rouge: rouge, orange: orange };
+}
+
 // ============================================================
 // EXPORT PDF
 // ============================================================
@@ -880,6 +923,7 @@ function Dashboard({ onNav, reinterventions, onLogoClick, onParamsClick, passage
   const [localPassages, setLocalPassages] = useState([]);
   const [filterYear, setFilterYear] = useState(null);
   const [postesTotal, setPostesTotal] = useState(0);
+  const [postesListe, setPostesListe] = useState([]);
   const [nbMaintenancesDeiv, setNbMaintenancesDeiv] = useState(0);
   useEffect(() => {
     if (!passagesGlobaux || passagesGlobaux.length === 0) {
@@ -888,7 +932,7 @@ function Dashboard({ onNav, reinterventions, onLogoClick, onParamsClick, passage
       }).catch(()=>{});
     }
     sbGet("postes").then(data => {
-      if (data && data.length > 0) setPostesTotal(data.length);
+      if (data && data.length > 0) { setPostesTotal(data.length); setPostesListe(data); }
     }).catch(()=>{});
     sbGet("maintenance_deiv_interventions").then(data => {
       if (data && data.length > 0) setNbMaintenancesDeiv(data.length);
@@ -906,7 +950,9 @@ function Dashboard({ onNav, reinterventions, onLogoClick, onParamsClick, passage
     )).length;
     const conso_totale = Object.values(saisies).filter(s => s && estConsoTotale(s.etat)).length;
     const conso_partielle = Object.values(saisies).filter(s => s && estConsoPartielle(s.etat)).length;
-    return { ...p, anomalies, conso_totale, conso_partielle, total: Object.keys(saisies).length, statut: p.statut||"Terminé" };
+    // Comptage par seuil (tous types de postes) : rouge=critique, orange=vigilance
+    const cs = compteSeuils(p, postesListe, seuilsGlobaux);
+    return { ...p, anomalies, conso_totale, conso_partielle, seuil_rouge: cs.rouge, seuil_orange: cs.orange, total: Object.keys(saisies).length, statut: p.statut||"Terminé" };
   }) : PASSAGES;
 
   const pd = d => { if(!d)return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
@@ -1074,8 +1120,10 @@ function Dashboard({ onNav, reinterventions, onLogoClick, onParamsClick, passage
         const alertes = [];
 
         // 1. Seuil dépassé sur le dernier passage rongeurs
-        if (lvl === "critique") alertes.push({ type:"critique", icon:"🔴", titre:"Seuil critique dépassé", msg:`${last.anomalies} consommation(s) sur ${nbPostesRongeurs} postes (${tauxActivite}%) lors du dernier passage (${last.date}) — seuil critique : ${seuilCritique}%` });
-        else if (lvl === "alerte") alertes.push({ type:"alerte", icon:"🟠", titre:"Seuil de vigilance atteint", msg:`${last.anomalies} consommation(s) sur ${nbPostesRongeurs} postes (${tauxActivite}%) lors du dernier passage (${last.date}) — seuil vigilance : ${seuilVigilance}%` });
+        // Alerte basee sur les postes depassant leur seuil (tous types confondus)
+        const nbRouge = last.seuil_rouge||0, nbOrange = last.seuil_orange||0;
+        if (nbRouge > 0) alertes.push({ type:"critique", icon:"🔴", titre:"Seuil critique dépassé", msg:`${nbRouge} poste(s) en seuil rouge et ${nbOrange} en seuil orange lors du dernier passage (${last.date})` });
+        else if (nbOrange > 0) alertes.push({ type:"alerte", icon:"🟠", titre:"Seuil de vigilance atteint", msg:`${nbOrange} poste(s) en seuil orange lors du dernier passage (${last.date})` });
 
         // 2. Passages manqués (fréquence contractuelle) - uniquement sur l annee en cours
         const anneeEnCours = String(new Date().getFullYear());
@@ -1168,8 +1216,8 @@ function Dashboard({ onNav, reinterventions, onLogoClick, onParamsClick, passage
                       <span style={{ fontSize: 11, fontWeight: 700, color: pctColor, background: pctColor + "22", borderRadius: 6, padding: "1px 7px" }}>{pctLabel}</span>
                     )}
                     <div style={{ flex: 1, fontSize: 12 }}>
-                      <span style={{ color: "#ef4444", fontWeight: 700 }}>{p.conso_totale}</span> tot.&nbsp;
-                      <span style={{ color: "#f59e0b", fontWeight: 700 }}>{p.conso_partielle}</span> part.
+                      <span style={{ color: "#ef4444", fontWeight: 700 }}>{p.seuil_rouge}</span>&nbsp;rouge&nbsp;
+                      <span style={{ color: "#f59e0b", fontWeight: 700 }}>{p.seuil_orange}</span>&nbsp;orange
                     </div>
                     <Badge label={p.statut} />
                   </div>
@@ -1194,14 +1242,22 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
   const [passagesSaisies, setPassagesSaisies] = useState([]);
   const [lightboxImg, setLightboxImg] = useState(null);
   const [postesRongeurs, setPostesRongeurs] = useState([]);
+  const [postesTous, setPostesTous] = useState([]); // liste complete pour le comptage par seuil
+  const [seuilsInterv, setSeuilsInterv] = useState({}); // seuils complets tous types
 
   useEffect(() => {
     sbGet("postes").then(data => {
       if (data && data.length > 0) {
+        setPostesTous(data);
         setPostesRongeurs(data.filter(p => {
           const n = (p.nuisible||"Rongeurs");
           return n !== "Insectes volants";
         }));
+      }
+    }).catch(()=>{});
+    sbGet("seuils").then(data => {
+      if (data && data.length > 0 && data[0].data) {
+        try { setSeuilsInterv(typeof data[0].data === "string" ? JSON.parse(data[0].data) : data[0].data); } catch(_e) {}
       }
     }).catch(()=>{});
   }, []);
@@ -1403,7 +1459,8 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
               const anomalies = p.anomalies ?? (conso_totale + conso_partielle + Object.values(saisiesP).filter(s=>s&&(parseInt(s.cap_souris||0)+parseInt(s.cap_ratBrun||0)+parseInt(s.cap_ratNoir||0))>0).length);
               // Postes controles = postes reellement presents dans les saisies
               const total = p.total ?? Object.keys(saisiesP).length;
-              const pEnriched = {...p, conso_totale, conso_partielle, anomalies, total};
+              const _cs = compteSeuils(p, postesTous, seuilsInterv);
+              const pEnriched = {...p, conso_totale, conso_partielle, anomalies, total, seuil_rouge:_cs.rouge, seuil_orange:_cs.orange};
               const nbPostesTotal = passagesToShow.length > 0 ? Math.max(...passagesToShow.map(p=>{ const s=typeof p.saisies==="string"?JSON.parse(p.saisies||"{}"):p.saisies||{}; return Object.keys(s).length; }), 1) : 1;
               const tauxAct = nbPostesTotal > 0 ? Math.round(anomalies / nbPostesTotal * 100) : 0;
               const lvlColor = tauxAct >= SEUILS.critique ? "#ef4444" : tauxAct >= SEUILS.alerte ? "#f59e0b" : "#22c55e";
@@ -1483,10 +1540,10 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
                           );
                         })() : (
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:8, marginBottom:12 }}>
-                          {[["Postes",pEnriched.total],["Conso. totale",pEnriched.conso_totale],["Conso. partielle",pEnriched.conso_partielle],["Total actifs",pEnriched.anomalies]].map(item => (
+                          {[["Postes",pEnriched.total,"#cbd5e1"],["Seuil rouge",pEnriched.seuil_rouge,"#ef4444"],["Seuil orange",pEnriched.seuil_orange,"#f59e0b"],["Total actifs",pEnriched.anomalies,lvlColor]].map(item => (
                             <div key={item[0]} style={{ background:"#1a2540", borderRadius:8, padding:"8px 12px" }}>
                               <div style={{ fontSize:10, color:"#7a90aa" }}>{item[0]}</div>
-                              <div style={{ fontSize:18, fontWeight:700, color:lvlColor }}>{item[1]}</div>
+                              <div style={{ fontSize:18, fontWeight:700, color:item[2] }}>{item[1]}</div>
                             </div>
                           ))}
                         </div>
