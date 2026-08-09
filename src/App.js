@@ -6900,6 +6900,10 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
   const [filterTypeMol, setFilterTypeMol] = useState("tous");
   const [deivForm, setDeivForm] = useState({ date:"", technicien:"" });
   const [deivSaisies, setDeivSaisies] = useState({});
+  // Mode saisie telephone : poste selectionne + recherche + postes deja valides
+  const [mobPosteId, setMobPosteId] = useState("");
+  const [mobRecherche, setMobRecherche] = useState("");
+  const [mobValides, setMobValides] = useState({}); // { posteId: true } postes valides cette session
   // Seuils partagés via props App
   const seuils = seuilsGlobaux;
   const setSeuils = setSeuilsGlobaux;
@@ -6934,6 +6938,14 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
   }, []);
 
   function startNew() { setForm({date:"",technicien:"",type:"Rongeurs",notes:""}); setSaisies(initSaisiesAvecMolecule({})); setView("saisie"); }
+  // Mode telephone : meme form + saisies (donc meme enregistrement, meme branchement
+  // plan/tendances), mais saisie poste par poste via liste alphabetique + recherche.
+  function startMobile() {
+    setForm({date:"",technicien:"",type:"Rongeurs",notes:""});
+    setSaisies(initSaisiesAvecMolecule({}));
+    setMobPosteId(""); setMobRecherche(""); setMobValides({});
+    setView("mobile");
+  }
 
   const [editingPassage, setEditingPassage] = useState(null);
 
@@ -7427,10 +7439,166 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
       {/* ONGLET SAISIE */}
       {activeTab==="saisie_tab" && (
         <div>
+          {view==="mobile" && (() => {
+            // Tous les postes du site, tries alphabetiquement, filtres par la recherche.
+            var tousPostes = sortPostes(postes.slice());
+            var q = mobRecherche.trim().toLowerCase();
+            var postesFiltres = q ? tousPostes.filter(function(p){ return String(p.id).toLowerCase().indexOf(q) >= 0; }) : tousPostes;
+            var poste = postes.filter(function(p){ return p.id === mobPosteId; })[0];
+            var nuisible = poste ? (poste.nuisible || "Rongeurs") : "";
+            var s = (mobPosteId && saisies[mobPosteId]) || {};
+            var estRongeur = nuisible === "Rongeurs";
+            var nbValides = Object.keys(mobValides).length;
+            // Un poste est "renseigne" si etat non vide, ou une capture/iv > 0, ou molecule posee.
+            function posteRenseigne(pid) {
+              var x = saisies[pid]; if (!x) return false;
+              if (x.etat !== undefined && x.etat !== "") return true;
+              return Object.keys(x).some(function(k){ return (k.indexOf("cap_")===0 || k.indexOf("iv_")===0) && parseInt(x[k]||0) > 0; });
+            }
+            return (
+              <div style={{ maxWidth:520, margin:"0 auto" }}>
+                {/* En-tete : date + technicien, comme la saisie classique */}
+                <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" }}>
+                  <button onClick={function(){ setView("liste"); }} style={{ background:"#243352", color:"#94a3b8", border:"1px solid #3d5270", borderRadius:8, padding:"8px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>← Retour</button>
+                  <div style={{ flex:1, minWidth:120 }}>
+                    <label style={{ fontSize:9, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:3 }}>DATE</label>
+                    <input type="date" value={form.date} onChange={function(e){ setForm({...form, date:e.target.value}); }}
+                      style={{ width:"100%", background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"9px 10px", color:"#f1f5f9", fontSize:13, fontFamily:"inherit", boxSizing:"border-box" }}/>
+                  </div>
+                  <div style={{ flex:1, minWidth:120 }}>
+                    <label style={{ fontSize:9, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:3 }}>TECHNICIEN</label>
+                    <select value={form.technicien} onChange={function(e){ setForm({...form, technicien:e.target.value}); }}
+                      style={{ width:"100%", background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"9px 10px", color:"#f1f5f9", fontSize:13, fontFamily:"inherit", boxSizing:"border-box" }}>
+                      <option value="">— choisir —</option>
+                      {TECHNICIENS.map(function(t){ return <option key={t} value={t}>{t}</option>; })}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ fontSize:11, color:"#7a90aa", marginBottom:8 }}>{nbValides} poste(s) valide(s) sur {tousPostes.length}</div>
+
+                {/* Barre de recherche + liste deroulante alphabetique de tous les postes */}
+                <input value={mobRecherche} onChange={function(e){ setMobRecherche(e.target.value); }}
+                  placeholder="Rechercher un poste..."
+                  style={{ width:"100%", background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"11px 12px", color:"#f1f5f9", fontSize:14, fontFamily:"inherit", boxSizing:"border-box", marginBottom:6 }}/>
+                <select value={mobPosteId} onChange={function(e){ setMobPosteId(e.target.value); }} size={1}
+                  style={{ width:"100%", background:"#243352", border:"1px solid #3d5270", borderRadius:8, padding:"11px 12px", color:"#f1f5f9", fontSize:14, fontFamily:"inherit", boxSizing:"border-box", marginBottom:14 }}>
+                  <option value="">— choisir un poste ({postesFiltres.length}) —</option>
+                  {postesFiltres.map(function(p){
+                    var done = mobValides[p.id] || posteRenseigne(p.id);
+                    return <option key={p.id} value={p.id} style={{ color: done ? "#5a7090" : "#f1f5f9" }}>{(done ? "\u2713 " : "") + p.id + "  (" + (p.nuisible||"Rongeurs") + ")"}</option>;
+                  })}
+                </select>
+
+                {!poste && <div style={{ textAlign:"center", color:"#5a7090", padding:24, fontSize:13 }}>Choisissez un poste ci-dessus pour le saisir.</div>}
+
+                {poste && (
+                  <div style={{ background:"#243352", border:"1px solid #3d5270", borderRadius:12, padding:16 }}>
+                    <div style={{ fontSize:16, fontWeight:800, color:"#f1f5f9", marginBottom:2 }}>{poste.id}</div>
+                    <div style={{ fontSize:11, color:"#7a90aa", marginBottom:14 }}>{nuisible}{poste.zone ? " · " + poste.zone : ""}</div>
+
+                    {/* RONGEURS : ancienne molecule (auto) + nouvelle molecule + consommation OU captures */}
+                    {estRongeur && (
+                      <div>
+                        <div style={{ marginBottom:12 }}>
+                          <label style={{ fontSize:10, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:4 }}>ANCIENNE MOLECULE (derniere connue)</label>
+                          <div style={{ background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"9px 12px", color:"#94a3b8", fontSize:13 }}>{poste.molecule_actuelle || "Placebo"}</div>
+                        </div>
+                        <div style={{ marginBottom:14 }}>
+                          <label style={{ fontSize:10, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:4 }}>NOUVELLE MOLECULE</label>
+                          <select value={s.molecule || (poste.molecule_actuelle || "Placebo")} onChange={function(e){ setSaisieField(poste.id, "molecule", e.target.value); }}
+                            style={{ width:"100%", background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"10px 12px", color:"#f1f5f9", fontSize:14, fontFamily:"inherit", boxSizing:"border-box" }}>
+                            <option value="Placebo">Placebo</option>
+                            <option value="Toxique">Toxique</option>
+                            {produitsBiocides.map(function(pb){ return <option key={pb.id} value={pb.nom}>{pb.nom}</option>; })}
+                          </select>
+                        </div>
+                        <div style={{ marginBottom:14 }}>
+                          <label style={{ fontSize:10, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:6 }}>CONSOMMATION</label>
+                          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                            {["RAS","25","50","75","100"].map(function(v){
+                              var lbl = v==="RAS" ? "RAS" : v+"%";
+                              var actif = (s.etat||"") === v || (v==="100" && estConsoTotale(s.etat)) ;
+                              return <button key={v} onClick={function(){ setSaisieField(poste.id, "etat", v==="RAS" ? "" : v); }}
+                                style={{ flex:"1 1 60px", minHeight:44, background: actif ? "#1d4ed8" : "#1a2540", color: actif ? "#fff" : "#cbd5e1", border:"1px solid " + (actif ? "#3b82f6" : "#3d5270"), borderRadius:8, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>{lbl}</button>;
+                            })}
+                          </div>
+                        </div>
+                        <div>
+                          <label style={{ fontSize:10, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:6 }}>CAPTURES (nombre)</label>
+                          <div style={{ display:"flex", gap:8 }}>
+                            {TYPES_RONGEUR.map(function(tr){
+                              return (
+                                <div key={tr} style={{ flex:1 }}>
+                                  <div style={{ fontSize:10, color:"#94a3b8", marginBottom:3 }}>{LABELS_RONGEUR[tr]}</div>
+                                  <input type="number" inputMode="numeric" min="0" value={s["cap_"+tr]||""} onChange={function(e){ setSaisieField(poste.id, "cap_"+tr, e.target.value); }}
+                                    style={{ width:"100%", background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"10px 8px", color:"#f1f5f9", fontSize:15, fontFamily:"inherit", boxSizing:"border-box", textAlign:"center" }}/>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* INSECTES VOLANTS : un nombre par categorie */}
+                    {nuisible === "Insectes volants" && (
+                      <div>
+                        <label style={{ fontSize:10, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:6 }}>CAPTURES PAR TYPE</label>
+                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                          {CATS_IV.map(function(cat){
+                            return (
+                              <div key={cat}>
+                                <div style={{ fontSize:10, color:"#94a3b8", marginBottom:3 }}>{cat}</div>
+                                <input type="number" inputMode="numeric" min="0" value={s["iv_"+cat]||""} onChange={function(e){ setSaisieField(poste.id, "iv_"+cat, e.target.value); }}
+                                  style={{ width:"100%", background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"10px 8px", color:"#f1f5f9", fontSize:15, fontFamily:"inherit", boxSizing:"border-box", textAlign:"center" }}/>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* TEIGNES / BLATTES / IPS : un seul nombre */}
+                    {(nuisible === "Teignes" || nuisible === "Blattes" || nuisible === "IPS") && (
+                      <div>
+                        <label style={{ fontSize:10, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:6 }}>NOMBRE DE CAPTURES</label>
+                        <input type="number" inputMode="numeric" min="0" value={s.etat||""} onChange={function(e){ setSaisieField(poste.id, "etat", e.target.value); }}
+                          style={{ width:"100%", background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"12px", color:"#f1f5f9", fontSize:18, fontWeight:700, fontFamily:"inherit", boxSizing:"border-box", textAlign:"center" }}/>
+                      </div>
+                    )}
+
+                    {/* Valider ce poste : le marque comme fait (grise dans la liste) et passe au suivant */}
+                    <button onClick={function(){
+                        setMobValides(function(prev){ var n={...prev}; n[poste.id]=true; return n; });
+                        // Passer automatiquement au poste suivant non valide dans la liste filtree
+                        var idx = postesFiltres.findIndex(function(pp){ return pp.id === poste.id; });
+                        var suivant = "";
+                        for (var i=idx+1; i<postesFiltres.length; i++){ if(!mobValides[postesFiltres[i].id]){ suivant=postesFiltres[i].id; break; } }
+                        setMobPosteId(suivant);
+                      }}
+                      style={{ width:"100%", marginTop:16, background:"#059669", color:"#fff", border:"none", borderRadius:9, padding:"13px", fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:"inherit", minHeight:48 }}>
+                      Valider ce poste ✓
+                    </button>
+                  </div>
+                )}
+
+                {/* Enregistrer tout le passage (meme savePassage que la saisie classique) */}
+                <button onClick={savePassage}
+                  style={{ width:"100%", marginTop:16, background:"#1d4ed8", color:"#fff", border:"none", borderRadius:10, padding:"15px", fontSize:16, fontWeight:800, cursor:"pointer", fontFamily:"inherit", minHeight:52 }}>
+                  Enregistrer le passage
+                </button>
+              </div>
+            );
+          })()}
+
           {view==="liste" && (
             <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
               <button onClick={startNew} style={{background:"#1d4ed8",color:"#fff",border:"none",borderRadius:9,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
                 + Passage periodique
+              </button>
+              <button onClick={startMobile} style={{background:"#059669",color:"#fff",border:"none",borderRadius:9,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                📱 Saisie telephone
               </button>
               <button onClick={()=>setActiveTab("deiv_tab")} style={{background:"#f59e0b",color:"#000",border:"none",borderRadius:9,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
                 + Passage DEIV
