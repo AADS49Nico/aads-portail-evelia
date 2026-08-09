@@ -726,13 +726,30 @@ export function couleurSeuilPoste(p, s, seuils) {
   const nuisible = p.nuisible || "Rongeurs";
   const sr = seuils.rongeurs || {};
   if (nuisible === "Rongeurs") {
-    const total = (parseInt(s.cap_souris||0))+(parseInt(s.cap_ratBrun||0))+(parseInt(s.cap_ratNoir||0));
-    // capture_rouge par defaut = 1 (comme le reglage par defaut du portail) :
-    // une seule capture suffit a passer le poste en rouge, meme si le seuil
-    // n a pas ete charge/configure. Sinon un poste a captures restait vert.
-    const capRouge = (sr.capture_rouge !== undefined && sr.capture_rouge !== null) ? sr.capture_rouge : 1;
-    if ((total > 0 && total >= capRouge) || estConsoTotale(s.etat) || s.etat==="75%") return "rouge";
-    if (estConsoPartielle(s.etat)) return "orange";
+    // MEME logique que les pastilles du plan, pour rester coherent partout.
+    // 1) Consommation (prioritaire) : seuils conso_orange / conso_rouge.
+    const consoOrange = (seuils.rongeurs && seuils.rongeurs.conso_orange) || "25%";
+    const consoRouge  = (seuils.rongeurs && seuils.rongeurs.conso_rouge)  || "75%";
+    function niveauIdx(n){ if (estConsoTotale(n)) return 4; if (n==="75%") return 3; if (n==="50%") return 2; if (n==="25%") return 1; return 0; }
+    const etatIdx = niveauIdx(s.etat);
+    if (etatIdx > 0) {
+      if (etatIdx >= niveauIdx(consoRouge)) return "rouge";
+      if (etatIdx >= niveauIdx(consoOrange)) return "orange";
+      return "vert";
+    }
+    // 2) Captures (si pas de consommation) : seuils rongeursExt / rongeursInt.
+    const totalCap = (parseInt(s.cap_souris||0))+(parseInt(s.cap_ratBrun||0))+(parseInt(s.cap_ratNoir||0));
+    if (totalCap > 0) {
+      if (p.type === "RE") {
+        const sl=(seuils.rongeursExt&&seuils.rongeursExt.leger)??1, sm=(seuils.rongeursExt&&seuils.rongeursExt.moyen)??3;
+        return totalCap>=sm?"rouge":totalCap>=sl?"orange":"vert";
+      }
+      if (p.type === "RI") {
+        const sl=(seuils.rongeursInt&&seuils.rongeursInt.leger)??1, sm=(seuils.rongeursInt&&seuils.rongeursInt.moyen)??3;
+        return totalCap>=sm?"rouge":totalCap>=sl?"orange":"vert";
+      }
+      return "rouge"; // rongeur sans prefixe RE/RI : rouge des 1 capture (comme le plan)
+    }
     return "vert";
   }
   if (nuisible === "Blattes") { const v=parseInt(s.etat||0); const b=seuils.blattes||{}; return v>=b.moyen?"rouge":v>=b.leger?"orange":"vert"; }
