@@ -7516,10 +7516,10 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
                         <div style={{ marginBottom:14 }}>
                           <label style={{ fontSize:10, color:"#7a90aa", fontWeight:700, display:"block", marginBottom:6 }}>CONSOMMATION</label>
                           <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                            {["RAS","25","50","75","100"].map(function(v){
-                              var lbl = v==="RAS" ? "RAS" : v+"%";
-                              var actif = (s.etat||"") === v || (v==="100" && estConsoTotale(s.etat)) ;
-                              return <button key={v} onClick={function(){ setSaisieField(poste.id, "etat", v==="RAS" ? "" : v); }}
+                            {[["RAS",""],["25%","25%"],["50%","50%"],["75%","75%"],["100%","Totale"]].map(function(pair){
+                              var lbl = pair[0], val = pair[1];
+                              var actif = val==="" ? (!s.etat) : ((s.etat||"") === val || (val==="Totale" && estConsoTotale(s.etat)));
+                              return <button key={lbl} onClick={function(){ setSaisieField(poste.id, "etat", val); }}
                                 style={{ flex:"1 1 60px", minHeight:44, background: actif ? "#1d4ed8" : "#1a2540", color: actif ? "#fff" : "#cbd5e1", border:"1px solid " + (actif ? "#3b82f6" : "#3d5270"), borderRadius:8, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>{lbl}</button>;
                             })}
                           </div>
