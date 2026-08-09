@@ -160,16 +160,21 @@ let AADS_CONFIG = {
 
 
 // ============================================================
-// >>> CONFIGURATION DU PORTAIL - A REMPLIR AVANT DE DEPLOYER <<<
+// CONFIGURATION DU PORTAIL (uniformisee)
 // ============================================================
-// Colle ici les deux valeurs de TA base Supabase (Settings -> API) :
-//   - SUPABASE_URL  = la "Project URL"     (ex: https://xxxx.supabase.co)
-//   - SUPABASE_KEY  = la cle "publishable" (commence par sb_publishable_)
-// Tant qu elles sont vides, le portail affiche un avertissement et ne se
-// connecte a aucune base. C est voulu : evite d ecrire chez un autre client.
+// La config Supabase vient des VARIABLES D ENVIRONNEMENT Vercel :
+//   REACT_APP_SUPABASE_URL  et  REACT_APP_SUPABASE_KEY
+// A definir dans chaque projet Vercel (Settings -> Environment Variables).
+// Ainsi un SEUL code sert tous les clients : on corrige une fois, on
+// deploie partout. Aucune config client n est ecrite en dur ici.
+//
+// Repli (fallback) : si les variables ne sont pas definies, on utilise les
+// valeurs ci-dessous. Elles pointent vers Evelia UNIQUEMENT le temps de la
+// transition ; une fois les variables Vercel en place, ce repli est ignore.
 // ============================================================
-const SUPABASE_URL = "https://azsqlbwqpqedggnrmoto.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6c3FsYndxcHFlZGdnbnJtb3RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0ODQ5MTMsImV4cCI6MjEwMDA2MDkxM30.N8VDlZspzGCy2sp6dNd8qXkx35eQfyU29DUNUIZvHvA";
+const ENV = (typeof process !== "undefined" && process.env) ? process.env : {};
+const SUPABASE_URL = ENV.REACT_APP_SUPABASE_URL || "https://azsqlbwqpqedggnrmoto.supabase.co";
+const SUPABASE_KEY = ENV.REACT_APP_SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6c3FsYndxcHFlZGdnbnJtb3RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0ODQ5MTMsImV4cCI6MjEwMDA2MDkxM30.N8VDlZspzGCy2sp6dNd8qXkx35eQfyU29DUNUIZvHvA";
 
 // ============================================================
 // MULTI-SITES
