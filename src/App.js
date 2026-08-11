@@ -200,6 +200,7 @@ const TABLES_PAR_SITE = ["postes","passages","plans","plans_dessines","plan_acti
 let SITE_ACTIF = ""; // reassigne par changerSite
 try { SITE_ACTIF = window.localStorage.getItem("aads_site_actif") || ""; } catch(_e) { SITE_ACTIF = ""; }
 let SITES_DISPO = [];
+let SITES_CONFIG = {};
 
 function tableParSite(table) { return TABLES_PAR_SITE.indexOf(String(table).split("?")[0]) !== -1; }
 // Si le site est inconnu, on renvoie un filtre impossible plutot que rien :
@@ -215,10 +216,37 @@ function filtreSite(table) {
 // remonte la page active via sa key. Le remontage rejoue l effet de chargement.
 var __onSiteChange = null;
 var __onSitesListChange = null;
+// Applique au CLIENT_CONFIG la config du site donne (contrat, adresse, seuils, contacts...).
+// Indispensable a la bascule : sinon le contrat resterait celui du site d ouverture et le
+// filtre des donnees (contrat + site) ne remonterait plus aucun poste sur un site a contrat different.
+function appliquerConfigSite(id) {
+  var cfg = SITES_CONFIG[id];
+  if (!cfg) return;
+  if (cfg.nom) CLIENT_CONFIG.nom = cfg.nom;
+  CLIENT_CONFIG.contrat = cfg.contrat || "";
+  CLIENT_CONFIG.site = cfg.site || id;
+  CLIENT_CONFIG.adresse = cfg.adresse || "";
+  CLIENT_CONFIG.type_site = cfg.type_site || "";
+  CLIENT_CONFIG.date_debut = cfg.date_debut || "";
+  CLIENT_CONFIG.date_fin = cfg.date_fin || "";
+  if (cfg.passages_an) CLIENT_CONFIG.passages_an = cfg.passages_an;
+  if (cfg.seuil_vigilance) CLIENT_CONFIG.seuil_vigilance = cfg.seuil_vigilance;
+  if (cfg.seuil_critique) CLIENT_CONFIG.seuil_critique = cfg.seuil_critique;
+  CLIENT_CONFIG.contact1_nom = cfg.contact1_nom || "";
+  CLIENT_CONFIG.contact1_titre = cfg.contact1_titre || "";
+  CLIENT_CONFIG.contact1_mail = cfg.contact1_mail || "";
+  CLIENT_CONFIG.contact1_tel = cfg.contact1_tel || "";
+  CLIENT_CONFIG.contact2_nom = cfg.contact2_nom || "";
+  CLIENT_CONFIG.contact2_titre = cfg.contact2_titre || "";
+  CLIENT_CONFIG.contact2_mail = cfg.contact2_mail || "";
+  CLIENT_CONFIG.contact2_tel = cfg.contact2_tel || "";
+  try { CLIENT_CONFIG.certifications = typeof cfg.certifications==="string" ? JSON.parse(cfg.certifications||"[]") : (cfg.certifications||[]); } catch(e) { CLIENT_CONFIG.certifications = []; }
+}
 function changerSite(id) {
   if (id === SITE_ACTIF) return;
   try { window.localStorage.setItem("aads_site_actif", id); } catch(_e) { return; }
   SITE_ACTIF = id;
+  appliquerConfigSite(id);
   if (typeof __onSiteChange === "function") __onSiteChange(id);
 }
 
@@ -13882,6 +13910,7 @@ function SitesTab() {
       var liste = Array.isArray(d) ? d : [];
       setSites(liste.map(normaliser));
       SITES_DISPO = liste.map(x => ({ id: x.id, site: x.site || x.id }));
+      liste.forEach(function(x){ SITES_CONFIG[x.id] = x; });
       if (typeof __onSitesListChange === "function") __onSitesListChange();
     });
   }
@@ -14524,6 +14553,7 @@ function AppPortail({ isAdmin, onLogout }) {
     sbFetch("config_client?order=id.asc", "GET").then(data => {
       if (data && data.length > 0) {
         SITES_DISPO = data.map(x => ({ id: x.id, site: x.site || x.id }));
+        data.forEach(function(x){ SITES_CONFIG[x.id] = x; });
         const choisi = data.filter(x => x.id === SITE_ACTIF)[0] || data[0];
         // Premier passage sur ce navigateur : on fixe le site et on recharge une fois,
         // sinon les chargements deja partis auraient tourne sans filtre de site.
