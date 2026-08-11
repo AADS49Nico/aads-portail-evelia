@@ -1800,6 +1800,11 @@ function Cartographie({ seuilsGlobaux }) {
   function sortPostesNat(list) {
     const TYPE_ORDER = { "RE": 0, "RI": 1 };
     return list.slice().sort((a,b)=>{
+      const oa = (a.ordre===undefined||a.ordre===null||a.ordre==="") ? null : Number(a.ordre);
+      const ob = (b.ordre===undefined||b.ordre===null||b.ordre==="") ? null : Number(b.ordre);
+      if (oa!==null && ob!==null) { if (oa!==ob) return oa - ob; }
+      else if (oa!==null) return -1;
+      else if (ob!==null) return 1;
       const ta = TYPE_ORDER[a.type] !== undefined ? TYPE_ORDER[a.type] : 99;
       const tb = TYPE_ORDER[b.type] !== undefined ? TYPE_ORDER[b.type] : 99;
       if (ta !== tb) return ta - tb;
@@ -7104,6 +7109,11 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
   function sortPostes(list, ignorePrefix) {
     const TYPE_ORDER = { "RE": 0, "RI": 1 };
     return list.slice().sort((a,b)=>{
+      const oa = (a.ordre===undefined||a.ordre===null||a.ordre==="") ? null : Number(a.ordre);
+      const ob = (b.ordre===undefined||b.ordre===null||b.ordre==="") ? null : Number(b.ordre);
+      if (oa!==null && ob!==null) { if (oa!==ob) return oa - ob; }
+      else if (oa!==null) return -1;
+      else if (ob!==null) return 1;
       const ta = TYPE_ORDER[a.type] !== undefined ? TYPE_ORDER[a.type] : 99;
       const tb = TYPE_ORDER[b.type] !== undefined ? TYPE_ORDER[b.type] : 99;
       if (ta !== tb) return ta - tb;
@@ -10981,6 +10991,11 @@ function GestionPostes({ postes, setPostes }) {
   function sortPostesNat(list) {
     const TYPE_ORDER = { "RE": 0, "RI": 1 };
     return list.slice().sort((a,b)=>{
+      const oa = (a.ordre===undefined||a.ordre===null||a.ordre==="") ? null : Number(a.ordre);
+      const ob = (b.ordre===undefined||b.ordre===null||b.ordre==="") ? null : Number(b.ordre);
+      if (oa!==null && ob!==null) { if (oa!==ob) return oa - ob; }
+      else if (oa!==null) return -1;
+      else if (ob!==null) return 1;
       const ta = TYPE_ORDER[a.type] !== undefined ? TYPE_ORDER[a.type] : 99;
       const tb = TYPE_ORDER[b.type] !== undefined ? TYPE_ORDER[b.type] : 99;
       if (ta !== tb) return ta - tb;
@@ -10993,6 +11008,25 @@ function GestionPostes({ postes, setPostes }) {
       if(an!==bn)return an-bn;
       return as_.localeCompare(bs);
     });
+  }
+
+  const dragId = useRef(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const reorderActif = !search && filterNuisible === "Tous";
+
+  function onDropReorder(targetId) {
+    var src = dragId.current;
+    dragId.current = null;
+    setDragOverId(null);
+    if (!src || src === targetId) return;
+    var order = sortPostesNat(postes).map(function(p){ return p.id; });
+    var from = order.indexOf(src), to = order.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    order.splice(to, 0, order.splice(from, 1)[0]);
+    var ordreMap = {}; order.forEach(function(id, i){ ordreMap[id] = i; });
+    setPostes(function(prev){ return prev.map(function(p){ return { ...p, ordre: (ordreMap[p.id] !== undefined ? ordreMap[p.id] : p.ordre) }; }); });
+    var payload = order.map(function(id, i){ return { id: id, ordre: i, contrat: CLIENT_CONFIG.contrat }; });
+    sbUpsert("postes", payload);
   }
 
   const filtered = sortPostesNat(postes.filter(p => {
@@ -11099,13 +11133,21 @@ function GestionPostes({ postes, setPostes }) {
         </select>
         <span style={{fontSize:11,color:"#5a7090",alignSelf:"center"}}>{filtered.length} postes</span>
       </div>
+      <div style={{fontSize:10,color:"#5a7090",marginBottom:6,fontStyle:"italic"}}>{reorderActif ? "Glisser une ligne pour reordonner les postes. L ordre est enregistre pour tous." : "Retire la recherche et le filtre nuisible pour pouvoir reordonner par glisser-deposer."}</div>
       <Card style={{padding:0,overflow:"hidden"}}>
         <div style={{background:"#1a2540",padding:"8px 14px",display:"grid",gridTemplateColumns:"70px 1fr 110px 70px 80px 70px 80px 80px",gap:8,fontSize:9,fontWeight:700,color:"#7a90aa",textTransform:"uppercase"}}>
           <div>N°</div><div>Zone</div><div>Macro</div><div>Type</div><div>Nuisible</div><div>Capture</div><div>Statut</div><div>Actions</div>
         </div>
         <div style={{maxHeight:400,overflowY:"auto"}}>
           {filtered.map((p,i)=>(
-            <div key={p.id} style={{padding:"7px 14px",display:"grid",gridTemplateColumns:"70px 1fr 110px 70px 80px 70px 80px 80px",gap:8,alignItems:"center",borderTop:"1px solid #243352",background:i%2===0?"transparent":"#ffffff04"}}>
+            <div key={p.id}
+              draggable={reorderActif && editId!==p.id}
+              onDragStart={e=>{ dragId.current = p.id; e.dataTransfer.effectAllowed = "move"; }}
+              onDragOver={e=>{ if(!reorderActif){return;} e.preventDefault(); if(dragOverId!==p.id) setDragOverId(p.id); }}
+              onDragLeave={()=>{ if(dragOverId===p.id) setDragOverId(null); }}
+              onDrop={e=>{ e.preventDefault(); onDropReorder(p.id); }}
+              onDragEnd={()=>{ dragId.current=null; setDragOverId(null); }}
+              style={{padding:"7px 14px",display:"grid",gridTemplateColumns:"70px 1fr 110px 70px 80px 70px 80px 80px",gap:8,alignItems:"center",borderTop:dragOverId===p.id?"2px solid #3b82f6":"1px solid #243352",background:dragOverId===p.id?"#1d4ed822":(i%2===0?"transparent":"#ffffff04"),cursor:(reorderActif && editId!==p.id)?"grab":"default"}}>
               {editId===p.id ? (
                 <>
                   <input value={editData.id} onChange={e=>setEditData(d=>({...d,id:e.target.value}))} style={{...inpS,width:"100%"}}/>
