@@ -139,6 +139,7 @@ const CLIENT_CONFIG = {
   nom: "",
   contrat: "",
   site: "",
+  adresse: "",
   type_site: "",
   date_debut: "",
   date_fin: "",
@@ -13861,6 +13862,7 @@ function ParametresModal({ onClose }) {
     nom: CLIENT_CONFIG.nom,
     contrat: CLIENT_CONFIG.contrat,
     site: CLIENT_CONFIG.site,
+    adresse: CLIENT_CONFIG.adresse||"",
     type_site: CLIENT_CONFIG.type_site,
     date_debut: CLIENT_CONFIG.date_debut,
     date_fin: CLIENT_CONFIG.date_fin,
@@ -13920,6 +13922,7 @@ function ParametresModal({ onClose }) {
     CLIENT_CONFIG.nom = form.nom;
     CLIENT_CONFIG.contrat = form.contrat;
     CLIENT_CONFIG.site = form.site;
+    CLIENT_CONFIG.adresse = form.adresse;
     CLIENT_CONFIG.type_site = form.type_site;
     CLIENT_CONFIG.date_debut = form.date_debut;
     CLIENT_CONFIG.date_fin = form.date_fin;
@@ -13949,6 +13952,7 @@ function ParametresModal({ onClose }) {
       nom: form.nom,
       contrat: form.contrat,
       site: form.site,
+      adresse: form.adresse,
       type_site: form.type_site,
       date_debut: form.date_debut,
       date_fin: form.date_fin,
@@ -13967,6 +13971,13 @@ function ParametresModal({ onClose }) {
     };
     try {
       await sbFetch("config_client", "POST", payload, { Prefer: "resolution=merge-duplicates,return=representation" });
+      // Le nom du client est commun a tous les sites : on le propage aux autres lignes.
+      try {
+        var idsSites = (SITES_DISPO||[]).map(function(s){ return s.id; }).filter(function(id){ return id && id !== idCible; });
+        for (var i2=0;i2<idsSites.length;i2++) {
+          await sbFetch("config_client", "POST", { id: idsSites[i2], nom: form.nom }, { Prefer: "resolution=merge-duplicates" });
+        }
+      } catch(_e) {}
       setSaving(false);
       setSaved(true);
       // Portail neuf : si aucun site n etait actif, la config vient de creer le
@@ -14008,7 +14019,7 @@ function ParametresModal({ onClose }) {
         {tab==="client" && (
         <>
         <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:12, color:"#7a90aa" }}>Ces informations sont utilisées dans tout le portail (PDF, en-têtes, dashboard...)</div>
+          <div style={{ fontSize:12, color:"#7a90aa" }}>Ces paramètres s appliquent au site en cours : {CLIENT_CONFIG.site || SITE_ACTIF || "site unique"}. Seul le nom du client reste commun à tous les sites.</div>
         </div>
 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
@@ -14025,8 +14036,12 @@ function ParametresModal({ onClose }) {
             <input value={form.type_site} onChange={e=>setForm(p=>({...p, type_site:e.target.value}))} style={inpStyle}/>
           </div>
           <div style={{gridColumn:"1/-1"}}>
-            <label style={labelStyle}>Adresse du site</label>
+            <label style={labelStyle}>Libellé du site (affiché dans le sélecteur)</label>
             <input value={form.site} onChange={e=>setForm(p=>({...p, site:e.target.value}))} style={inpStyle}/>
+          </div>
+          <div style={{gridColumn:"1/-1"}}>
+            <label style={labelStyle}>Adresse du site</label>
+            <input value={form.adresse} onChange={e=>setForm(p=>({...p, adresse:e.target.value}))} style={inpStyle}/>
           </div>
           <div>
             <label style={labelStyle}>Date début contrat</label>
@@ -14431,6 +14446,7 @@ function AppPortail({ isAdmin, onLogout }) {
         if (cfg.nom) CLIENT_CONFIG.nom = cfg.nom;
         if (cfg.contrat) CLIENT_CONFIG.contrat = cfg.contrat;
         if (cfg.site) CLIENT_CONFIG.site = cfg.site;
+        if (cfg.adresse) CLIENT_CONFIG.adresse = cfg.adresse;
         if (cfg.type_site) CLIENT_CONFIG.type_site = cfg.type_site;
         if (cfg.date_debut) CLIENT_CONFIG.date_debut = cfg.date_debut;
         if (cfg.date_fin) CLIENT_CONFIG.date_fin = cfg.date_fin;
