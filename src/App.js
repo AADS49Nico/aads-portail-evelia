@@ -1091,7 +1091,7 @@ function Dashboard({ onNav, reinterventions, onLogoClick, onParamsClick, passage
           <SiteSwitcher/>
         </div>
         <div style={{ fontSize: 13, color: "#7a90aa", display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-          <span>{CLIENT_CONFIG.type_site} - Contrat N {CLIENT_CONFIG.contrat}</span>
+          <span>{CLIENT_CONFIG.type_site}</span>
           {(CLIENT_CONFIG.certifications||[]).map(c=>(
             <span key={c} style={{ fontSize:10, fontWeight:700, background:"#1d4ed822", color:"#3b82f6", border:"1px solid #3b82f644", borderRadius:10, padding:"2px 9px" }}>{c}</span>
           ))}
