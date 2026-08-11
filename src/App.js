@@ -13781,68 +13781,151 @@ function SitesTab() {
   const [code, setCode] = useState("");
   const [libelle, setLibelle] = useState("");
   const [msg, setMsg] = useState("");
+  const [savingId, setSavingId] = useState("");
+  const CERTIFS_BASE = ["IFS","BRC","ISO 22000","FSSC 22000","HACCP"];
+
+  function normaliser(r) {
+    var certifs = [];
+    try { certifs = typeof r.certifications === "string" ? JSON.parse(r.certifications||"[]") : (r.certifications||[]); } catch(e) { certifs = []; }
+    return {
+      id: r.id,
+      site: r.site||"", adresse: r.adresse||"", contrat: r.contrat||"", type_site: r.type_site||"",
+      date_debut: r.date_debut||"", date_fin: r.date_fin||"",
+      passages_an: r.passages_an||12, seuil_vigilance: r.seuil_vigilance||5, seuil_critique: r.seuil_critique||10,
+      contact1_nom: r.contact1_nom||"", contact1_titre: r.contact1_titre||"", contact1_mail: r.contact1_mail||"", contact1_tel: r.contact1_tel||"",
+      contact2_nom: r.contact2_nom||"", contact2_titre: r.contact2_titre||"", contact2_mail: r.contact2_mail||"", contact2_tel: r.contact2_tel||"",
+      certifications: Array.isArray(certifs) ? certifs : [],
+    };
+  }
 
   function recharger() {
     sbFetch("config_client?order=id.asc", "GET").then(d => {
       var liste = Array.isArray(d) ? d : [];
-      setSites(liste);
-      // Synchroniser la globale lue par le selecteur de site en haut.
+      setSites(liste.map(normaliser));
       SITES_DISPO = liste.map(x => ({ id: x.id, site: x.site || x.id }));
-      // Rafraichir le selecteur en haut SANS remonter la page (contrairement a
-      // un changement de site, ici on ne recharge pas les donnees).
       if (typeof __onSitesListChange === "function") __onSitesListChange();
     });
   }
   useEffect(() => { recharger(); }, []);
+
+  function majChamp(idx, champ, valeur) {
+    setSites(prev => prev.map((s,i) => i===idx ? { ...s, [champ]: valeur } : s));
+  }
+  function toggleCertif(idx, c) {
+    setSites(prev => prev.map((s,i) => {
+      if (i!==idx) return s;
+      var has = s.certifications.indexOf(c) !== -1;
+      return { ...s, certifications: has ? s.certifications.filter(x=>x!==c) : s.certifications.concat([c]) };
+    }));
+  }
+
+  async function enregistrer(s) {
+    setSavingId(s.id);
+    var payload = {
+      id: s.id, site: s.site, adresse: s.adresse, contrat: s.contrat, type_site: s.type_site,
+      date_debut: s.date_debut, date_fin: s.date_fin,
+      passages_an: parseInt(s.passages_an)||12, seuil_vigilance: parseInt(s.seuil_vigilance)||5, seuil_critique: parseInt(s.seuil_critique)||10,
+      contact1_nom: s.contact1_nom, contact1_titre: s.contact1_titre, contact1_mail: s.contact1_mail, contact1_tel: s.contact1_tel,
+      contact2_nom: s.contact2_nom, contact2_titre: s.contact2_titre, contact2_mail: s.contact2_mail, contact2_tel: s.contact2_tel,
+      certifications: JSON.stringify(s.certifications||[]),
+    };
+    try {
+      await sbFetch("config_client", "POST", payload, { Prefer: "resolution=merge-duplicates,return=representation" });
+      setSavingId("");
+      setMsg("Site " + (s.site||s.id) + " enregistré.");
+      if (s.id === SITE_ACTIF) {
+        Object.keys(payload).forEach(function(k){ if (k!=="id" && k!=="certifications") CLIENT_CONFIG[k]=payload[k]; });
+        try { CLIENT_CONFIG.certifications = s.certifications||[]; } catch(_e) {}
+      }
+    } catch(err) {
+      setSavingId("");
+      setMsg("Echec enregistrement " + (s.site||s.id) + " : " + (err && err.message ? err.message : err));
+    }
+  }
 
   function ajouter() {
     var c = (code||"").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
     if (!c) { setMsg("Le code du site est obligatoire."); return; }
     if (sites.filter(s => s.id === c).length > 0) { setMsg("Le code " + c + " existe deja."); return; }
     var modele = sites[0] || {};
-    sbUpsert("config_client", {
-      id: c,
-      site: (libelle||"").trim() || c,
-      nom: modele.nom || CLIENT_CONFIG.nom,
-      contrat: modele.contrat || CLIENT_CONFIG.contrat,
-      type_site: modele.type_site || "",
-      date_debut: modele.date_debut || "",
-      date_fin: modele.date_fin || "",
-      passages_an: modele.passages_an || 12,
-      seuil_vigilance: modele.seuil_vigilance || 5,
-      seuil_critique: modele.seuil_critique || 10,
-    }).then(() => { setCode(""); setLibelle(""); setMsg("Site " + c + " cree. Il apparait dans le selecteur en haut."); recharger(); });
-  }
-
-  function renommer(s) {
-    var v = window.prompt("Nouveau libelle pour le site " + s.id + " :", s.site || s.id);
-    if (v === null) return;
-    sbUpsert("config_client", { ...s, site: v.trim() || s.id })
-      .then(() => { setMsg("Libelle mis a jour. Recharge la page pour le voir dans le selecteur."); recharger(); });
+    var etaitVide = sites.length === 0;
+    sbFetch("config_client", "POST", {
+      id: c, site: (libelle||"").trim() || c,
+      nom: modele.nom || CLIENT_CONFIG.nom, contrat: CLIENT_CONFIG.contrat || "",
+      type_site: "", passages_an: 12, seuil_vigilance: 5, seuil_critique: 10,
+    }, { Prefer: "resolution=merge-duplicates" }).then(() => {
+      setCode(""); setLibelle(""); setMsg("Site " + c + " créé.");
+      recharger();
+      if (etaitVide) { try { window.localStorage.setItem("aads_site_actif", c); } catch(_e) {} setTimeout(function(){ window.location.reload(); }, 600); }
+    });
   }
 
   function supprimer(s) {
     if (s.id === SITE_ACTIF) { setMsg("Impossible de supprimer le site en cours. Bascule sur un autre site avant."); return; }
     if (sites.length <= 1) { setMsg("Il doit rester au moins un site."); return; }
-    if (!window.confirm("Supprimer le site " + s.id + " ?\n\nSes postes, passages et plans restent en base mais deviennent inaccessibles depuis le portail. Confirmer ?")) return;
-    sbDelete("config_client", s.id).then(() => { setMsg("Site " + s.id + " retire."); recharger(); });
+    if (!window.confirm("Supprimer le site " + (s.site||s.id) + " ?\n\nSes postes, passages et plans restent en base mais deviennent inaccessibles depuis le portail. Confirmer ?")) return;
+    sbDelete("config_client", s.id).then(() => { setMsg("Site " + s.id + " retiré."); recharger(); });
   }
 
-  var inp = { background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"8px 10px", color:"#f1f5f9", fontSize:12, fontFamily:"inherit" };
+  var inp = { background:"#1a2540", border:"1px solid #3d5270", borderRadius:8, padding:"8px 10px", color:"#f1f5f9", fontSize:12, fontFamily:"inherit", width:"100%", boxSizing:"border-box" };
+  var lab = { fontSize:10, color:"#7a90aa", fontWeight:700, textTransform:"uppercase", display:"block", marginBottom:4 };
+  var sousTitre = { fontSize:12, fontWeight:700, color:"#cbd5e1", margin:"10px 0 6px" };
+
   return (
     <div>
-      <div style={{ fontSize:11, color:"#7a90aa", marginBottom:14 }}>Chaque site est independant : ses postes, passages, plans, actions et seuils lui sont propres. Le selecteur en haut de page permet de basculer.</div>
-      {sites.map(s => (
-        <div key={s.id} style={{ display:"flex", alignItems:"center", gap:8, background:"#243352", borderRadius:9, padding:"9px 12px", marginBottom:7, border:"1px solid " + (s.id===SITE_ACTIF ? "#8b5cf6" : "#3d5270") }}>
-          <div style={{ flex:1 }}>
-            <span style={{ fontSize:13, fontWeight:700, color:"#f1f5f9" }}>{s.site || s.id}</span>
-            <span style={{ fontSize:10, color:"#5a7090", marginLeft:8 }}>code {s.id}</span>
-            {s.id===SITE_ACTIF && <span style={{ fontSize:9, fontWeight:700, color:"#8b5cf6", marginLeft:8 }}>SITE EN COURS</span>}
+      <div style={{ fontSize:11, color:"#7a90aa", marginBottom:14 }}>Chaque site a ses propres paramètres (adresse, contrat, seuils, contacts, certifications). Le nom du client, lui, est commun et se règle dans l onglet Client.</div>
+      {sites.map((s, idx) => (
+        <div key={s.id} style={{ background:"#243352", borderRadius:10, padding:14, marginBottom:14, border:"1px solid " + (s.id===SITE_ACTIF ? "#8b5cf6" : "#3d5270") }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+            <div>
+              <span style={{ fontSize:14, fontWeight:800, color:"#f1f5f9" }}>{s.site || s.id}</span>
+              <span style={{ fontSize:10, color:"#5a7090", marginLeft:8 }}>code {s.id}</span>
+              {s.id===SITE_ACTIF && <span style={{ fontSize:9, fontWeight:700, color:"#8b5cf6", marginLeft:8 }}>SITE EN COURS</span>}
+            </div>
+            <button onClick={()=>supprimer(s)} style={{ background:"transparent", color:"#ef4444", border:"1px solid #ef444455", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>Retirer</button>
           </div>
-          <button onClick={()=>renommer(s)} style={{ background:"transparent", color:"#7a90aa", border:"1px solid #3d5270", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>Renommer</button>
-          <button onClick={()=>supprimer(s)} style={{ background:"transparent", color:"#ef4444", border:"1px solid #ef444455", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>Retirer</button>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+            <div style={{ gridColumn:"1/-1" }}><label style={lab}>Libellé du site (sélecteur)</label><input value={s.site} onChange={e=>majChamp(idx,"site",e.target.value)} style={inp}/></div>
+            <div style={{ gridColumn:"1/-1" }}><label style={lab}>Adresse</label><input value={s.adresse} onChange={e=>majChamp(idx,"adresse",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Numéro de contrat</label><input value={s.contrat} onChange={e=>majChamp(idx,"contrat",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Type de site</label><input value={s.type_site} onChange={e=>majChamp(idx,"type_site",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Date début</label><input value={s.date_debut} onChange={e=>majChamp(idx,"date_debut",e.target.value)} placeholder="JJ/MM/AAAA" style={inp}/></div>
+            <div><label style={lab}>Date fin</label><input value={s.date_fin} onChange={e=>majChamp(idx,"date_fin",e.target.value)} placeholder="JJ/MM/AAAA" style={inp}/></div>
+            <div><label style={lab}>Passages par an</label><input type="number" value={s.passages_an} onChange={e=>majChamp(idx,"passages_an",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Seuil vigilance</label><input type="number" value={s.seuil_vigilance} onChange={e=>majChamp(idx,"seuil_vigilance",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Seuil critique</label><input type="number" value={s.seuil_critique} onChange={e=>majChamp(idx,"seuil_critique",e.target.value)} style={inp}/></div>
+          </div>
+
+          <div style={sousTitre}>Contact 1</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:8 }}>
+            <div><label style={lab}>Nom</label><input value={s.contact1_nom} onChange={e=>majChamp(idx,"contact1_nom",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Titre / Fonction</label><input value={s.contact1_titre} onChange={e=>majChamp(idx,"contact1_titre",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Email</label><input value={s.contact1_mail} onChange={e=>majChamp(idx,"contact1_mail",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Téléphone</label><input value={s.contact1_tel} onChange={e=>majChamp(idx,"contact1_tel",e.target.value)} style={inp}/></div>
+          </div>
+          <div style={sousTitre}>Contact 2</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:8 }}>
+            <div><label style={lab}>Nom</label><input value={s.contact2_nom} onChange={e=>majChamp(idx,"contact2_nom",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Titre / Fonction</label><input value={s.contact2_titre} onChange={e=>majChamp(idx,"contact2_titre",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Email</label><input value={s.contact2_mail} onChange={e=>majChamp(idx,"contact2_mail",e.target.value)} style={inp}/></div>
+            <div><label style={lab}>Téléphone</label><input value={s.contact2_tel} onChange={e=>majChamp(idx,"contact2_tel",e.target.value)} style={inp}/></div>
+          </div>
+
+          <div style={sousTitre}>Certifications</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
+            {CERTIFS_BASE.concat(s.certifications.filter(function(c){ return CERTIFS_BASE.indexOf(c)===-1; })).map(function(c){
+              var active = s.certifications.indexOf(c) !== -1;
+              return (
+                <button key={c} onClick={()=>toggleCertif(idx,c)} style={{ background:active?"#1d4ed8":"#1a2540", color:active?"#fff":"#94a3b8", border:"1px solid "+(active?"#3b82f6":"#3d5270"), borderRadius:20, padding:"5px 12px", fontSize:11, fontWeight:active?700:500, cursor:"pointer", fontFamily:"inherit" }}>{active?"✓ ":""}{c}</button>
+              );
+            })}
+          </div>
+
+          <button onClick={()=>enregistrer(s)} disabled={savingId===s.id} style={{ background:"#1d4ed8", color:"#fff", border:"none", borderRadius:8, padding:"8px 18px", fontSize:12, fontWeight:700, cursor:savingId===s.id?"default":"pointer", fontFamily:"inherit", opacity:savingId===s.id?0.6:1 }}>{savingId===s.id?"Enregistrement...":"Enregistrer ce site"}</button>
         </div>
       ))}
+
       <div style={{ marginTop:16, paddingTop:16, borderTop:"1px solid #3d5270" }}>
         <div style={{ fontSize:12, fontWeight:700, color:"#f1f5f9", marginBottom:8 }}>Ajouter un site</div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -13856,6 +13939,7 @@ function SitesTab() {
     </div>
   );
 }
+
 
 function ParametresModal({ onClose }) {
   const [form, setForm] = useState({
@@ -13995,6 +14079,25 @@ function ParametresModal({ onClose }) {
     }
   }
 
+  async function handleSaveNom() {
+    setSaving(true);
+    CLIENT_CONFIG.nom = form.nom;
+    try {
+      var liste = await sbFetch("config_client?order=id.asc", "GET");
+      var ids = (Array.isArray(liste) ? liste : []).map(function(r){ return r.id; }).filter(Boolean);
+      if (ids.length === 0 && SITE_ACTIF) ids = [SITE_ACTIF];
+      for (var i=0;i<ids.length;i++) {
+        await sbFetch("config_client", "POST", { id: ids[i], nom: form.nom }, { Prefer: "resolution=merge-duplicates" });
+      }
+      setSaving(false);
+      setSaved(true);
+      setTimeout(function(){ setSaved(false); }, 2000);
+    } catch (err) {
+      setSaving(false);
+      alert("Echec de l enregistrement du nom. Detail : " + (err && err.message ? err.message : err));
+    }
+  }
+
   const inpStyle = { background:"#243352", border:"1px solid #3d5270", borderRadius:8, padding:"9px 12px", color:"#f1f5f9", fontSize:13, fontFamily:"inherit", width:"100%" };
   const labelStyle = { fontSize:10, color:"#7a90aa", fontWeight:700, textTransform:"uppercase", display:"block", marginBottom:5 };
 
@@ -14019,107 +14122,16 @@ function ParametresModal({ onClose }) {
         {tab==="client" && (
         <>
         <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:12, color:"#7a90aa" }}>Ces paramètres s appliquent au site en cours : {CLIENT_CONFIG.site || SITE_ACTIF || "site unique"}. Seul le nom du client reste commun à tous les sites.</div>
+          <div style={{ fontSize:12, color:"#7a90aa" }}>Le nom du client est commun à tous les sites. Tous les autres paramètres (adresse, contrat, contacts, seuils, certifications) se règlent site par site dans l onglet Sites.</div>
         </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
-          <div style={{gridColumn:"1/-1"}}>
-            <label style={labelStyle}>Nom du client</label>
-            <input value={form.nom} onChange={e=>setForm(p=>({...p, nom:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Numéro de contrat</label>
-            <input value={form.contrat} onChange={e=>setForm(p=>({...p, contrat:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Type de site</label>
-            <input value={form.type_site} onChange={e=>setForm(p=>({...p, type_site:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div style={{gridColumn:"1/-1"}}>
-            <label style={labelStyle}>Libellé du site (affiché dans le sélecteur)</label>
-            <input value={form.site} onChange={e=>setForm(p=>({...p, site:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div style={{gridColumn:"1/-1"}}>
-            <label style={labelStyle}>Adresse du site</label>
-            <input value={form.adresse} onChange={e=>setForm(p=>({...p, adresse:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Date début contrat</label>
-            <input value={form.date_debut} onChange={e=>setForm(p=>({...p, date_debut:e.target.value}))} placeholder="JJ/MM/AAAA" style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Date fin contrat</label>
-            <input value={form.date_fin} onChange={e=>setForm(p=>({...p, date_fin:e.target.value}))} placeholder="JJ/MM/AAAA" style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Passages par an</label>
-            <input type="number" value={form.passages_an} onChange={e=>setForm(p=>({...p, passages_an:e.target.value}))} style={inpStyle}/>
-          </div>
-        </div>
-
-        <div style={{ fontSize:13, fontWeight:700, color:"#f1f5f9", marginBottom:10, marginTop:6, borderTop:"1px solid #3d5270", paddingTop:16 }}>Contact 1</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
-          <div>
-            <label style={labelStyle}>Nom</label>
-            <input value={form.contact1_nom} onChange={e=>setForm(p=>({...p, contact1_nom:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Titre / Fonction</label>
-            <input value={form.contact1_titre} onChange={e=>setForm(p=>({...p, contact1_titre:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Email</label>
-            <input type="email" value={form.contact1_mail} onChange={e=>setForm(p=>({...p, contact1_mail:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Téléphone</label>
-            <input value={form.contact1_tel} onChange={e=>setForm(p=>({...p, contact1_tel:e.target.value}))} style={inpStyle}/>
-          </div>
-        </div>
-
-        <div style={{ fontSize:13, fontWeight:700, color:"#f1f5f9", marginBottom:10, borderTop:"1px solid #3d5270", paddingTop:16 }}>Contact 2</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
-          <div>
-            <label style={labelStyle}>Nom</label>
-            <input value={form.contact2_nom} onChange={e=>setForm(p=>({...p, contact2_nom:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Titre / Fonction</label>
-            <input value={form.contact2_titre} onChange={e=>setForm(p=>({...p, contact2_titre:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Email</label>
-            <input type="email" value={form.contact2_mail} onChange={e=>setForm(p=>({...p, contact2_mail:e.target.value}))} style={inpStyle}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Téléphone</label>
-            <input value={form.contact2_tel} onChange={e=>setForm(p=>({...p, contact2_tel:e.target.value}))} style={inpStyle}/>
-          </div>
-        </div>
-
-        <div style={{ fontSize:13, fontWeight:700, color:"#f1f5f9", marginBottom:10, borderTop:"1px solid #3d5270", paddingTop:16 }}>Certifications</div>
         <div style={{ marginBottom:16 }}>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
-            {certifsList.map(c=>{
-              const active = certifications.includes(c);
-              return (
-                <button key={c} onClick={()=>toggleCertif(c)}
-                  style={{ background:active?"#1d4ed8":"#243352", color:active?"#fff":"#94a3b8", border:"1px solid "+(active?"#3b82f6":"#3d5270"), borderRadius:20, padding:"6px 14px", fontSize:12, fontWeight:active?700:500, cursor:"pointer", fontFamily:"inherit" }}>
-                  {active ? "✓ " : ""}{c}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display:"flex", gap:6 }}>
-            <input value={newCertifInput} onChange={e=>setNewCertifInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addCertifOption();}}} placeholder="Ajouter une certification..." style={{...inpStyle, flex:1}}/>
-            <button onClick={addCertifOption} style={{ background:"#22c55e", color:"#fff", border:"none", borderRadius:8, padding:"9px 16px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>+</button>
-          </div>
+          <label style={labelStyle}>Nom du client</label>
+          <input value={form.nom} onChange={e=>setForm(p=>({...p, nom:e.target.value}))} style={inpStyle}/>
         </div>
-
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-          <button onClick={handleSave} disabled={saving}
+          <button onClick={handleSaveNom} disabled={saving}
             style={{ background:"#1d4ed8", color:"#fff", border:"none", borderRadius:8, padding:"10px 22px", fontSize:13, fontWeight:700, cursor:saving?"default":"pointer", fontFamily:"inherit", opacity:saving?0.6:1 }}>
-            {saving ? "Enregistrement..." : "Enregistrer"}
+            {saving ? "Enregistrement..." : "Enregistrer le nom"}
           </button>
           {saved && <span style={{ color:"#22c55e", fontSize:13, fontWeight:600 }}>✓ Enregistré — rechargez la page pour tout mettre à jour</span>}
         </div>
