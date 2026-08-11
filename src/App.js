@@ -403,8 +403,8 @@ function svgPastilleForme(forme, x, y, r, col, ns) {
     shape = document.createElementNS(ns, "circle");
     shape.setAttribute("cx", x); shape.setAttribute("cy", y); shape.setAttribute("r", r);
   }
-  shape.setAttribute("fill", col); shape.setAttribute("stroke", "#fff");
-  shape.setAttribute("stroke-width", 2); shape.setAttribute("stroke-linejoin", "round");
+  shape.setAttribute("fill", col); shape.setAttribute("stroke", PASTILLE_CONFIG.cercleColor);
+  shape.setAttribute("stroke-width", PASTILLE_CONFIG.cercleSize); shape.setAttribute("stroke-linejoin", "round");
   g.appendChild(shape);
   return g;
 }
@@ -425,7 +425,7 @@ function canvasPastilleForme(ctx, forme, x, y, r, col) {
     ctx.arc(x, y, r, 0, Math.PI*2);
   }
   ctx.fillStyle = col; ctx.fill();
-  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
+  ctx.strokeStyle = PASTILLE_CONFIG.cercleColor; ctx.lineWidth = PASTILLE_CONFIG.cercleSize; ctx.lineJoin = "round"; ctx.stroke();
 }
 const NUISIBLE_COLORS = {
   Rongeurs: "#3b82f6",
@@ -10944,17 +10944,6 @@ function GestionPostes({ postes, setPostes }) {
   const [typesList, setTypesList] = useState(["RE", "RI", "DEIV", "PIV", "PC", "Autre"]);
   const [newTypeInput, setNewTypeInput] = useState("");
   const [showManageLists, setShowManageLists] = useState(false);
-  const [showPastilleCfg, setShowPastilleCfg] = useState(false);
-  const [pastilleForm, setPastilleForm] = useState({ size:PASTILLE_CONFIG.size, labelColor:PASTILLE_CONFIG.labelColor, labelSize:PASTILLE_CONFIG.labelSize, cercleSize:PASTILLE_CONFIG.cercleSize, cercleColor:PASTILLE_CONFIG.cercleColor });
-  const [savingPastille, setSavingPastille] = useState(false);
-  const [savedPastille, setSavedPastille] = useState(false);
-  async function savePastilleCfg() {
-    setSavingPastille(true);
-    var cfg = { size:parseInt(pastilleForm.size)||22, labelColor:pastilleForm.labelColor||"#ffffff", labelSize:parseInt(pastilleForm.labelSize)||7, cercleSize:(parseInt(pastilleForm.cercleSize)||0), cercleColor:pastilleForm.cercleColor||"#ffffff" };
-    PASTILLE_CONFIG.size=cfg.size; PASTILLE_CONFIG.labelColor=cfg.labelColor; PASTILLE_CONFIG.labelSize=cfg.labelSize; PASTILLE_CONFIG.cercleSize=cfg.cercleSize; PASTILLE_CONFIG.cercleColor=cfg.cercleColor;
-    await sbFetch("config_affichage", "POST", { id:"main", pastille_size:cfg.size, label_color:cfg.labelColor, label_size:cfg.labelSize, cercle_size:cfg.cercleSize, cercle_color:cfg.cercleColor }, { Prefer:"resolution=merge-duplicates" });
-    setSavingPastille(false); setSavedPastille(true); setTimeout(function(){ setSavedPastille(false); }, 2000);
-  }
 
   function addMacro(value, applyTo) {
     const v = value.trim();
@@ -11065,7 +11054,6 @@ function GestionPostes({ postes, setPostes }) {
               ↩ Annuler
             </button>
           )}
-          <button onClick={()=>setShowPastilleCfg(v=>!v)} style={{background:"#0ea5e922",color:"#0ea5e9",border:"1px solid #0ea5e944",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Affichage pastilles</button>
           <button onClick={()=>setShowManageLists(v=>!v)} style={{background:"#8b5cf622",color:"#8b5cf6",border:"1px solid #8b5cf644",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Gerer les listes</button>
           <button onClick={()=>{
             const headers = ["N°","Zone","Macro-zone","Type","Nuisible","Appat","Statut"];
@@ -11111,32 +11099,6 @@ function GestionPostes({ postes, setPostes }) {
                 <button onClick={()=>addType(newTypeInput)} style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+</button>
               </div>
             </div>
-          </div>
-        </Card>
-      )}
-      {showPastilleCfg && (
-        <Card style={{marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#f1f5f9",marginBottom:10}}>Affichage des pastilles (plan d implantation)</div>
-          <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-start"}}>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,flex:1,minWidth:260}}>
-              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Taille pastille (px)</label><input type="number" value={pastilleForm.size} onChange={e=>setPastilleForm(p=>({...p,size:e.target.value}))} style={inpS}/></div>
-              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Taille du nom (px)</label><input type="number" value={pastilleForm.labelSize} onChange={e=>setPastilleForm(p=>({...p,labelSize:e.target.value}))} style={inpS}/></div>
-              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Couleur du nom</label><input type="color" value={pastilleForm.labelColor} onChange={e=>setPastilleForm(p=>({...p,labelColor:e.target.value}))} style={{...inpS,padding:2,height:30,width:"100%"}}/></div>
-              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Epaisseur du cercle (px)</label><input type="number" value={pastilleForm.cercleSize} onChange={e=>setPastilleForm(p=>({...p,cercleSize:e.target.value}))} style={inpS}/></div>
-              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Couleur du cercle</label><input type="color" value={pastilleForm.cercleColor} onChange={e=>setPastilleForm(p=>({...p,cercleColor:e.target.value}))} style={{...inpS,padding:2,height:30,width:"100%"}}/></div>
-            </div>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-              <div style={{fontSize:9,color:"#7a90aa"}}>Aperçu</div>
-              <div style={{width:130,height:84,background:"#0f1e38",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <div style={{width:(Number(pastilleForm.size)||22),height:(Number(pastilleForm.size)||22),borderRadius:"50%",background:"#ef4444",border:((Number(pastilleForm.cercleSize)||0)+"px solid "+(pastilleForm.cercleColor||"#ffffff")),display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.7)",boxSizing:"border-box"}}>
-                  <span style={{fontSize:(Number(pastilleForm.labelSize)||7),fontWeight:900,color:(pastilleForm.labelColor||"#ffffff"),textShadow:"0 1px 2px rgba(0,0,0,0.6)"}}>RE1</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,alignItems:"center",marginTop:12}}>
-            <button onClick={savePastilleCfg} disabled={savingPastille} style={{background:"#0ea5e9",color:"#fff",border:"none",borderRadius:7,padding:"7px 16px",fontSize:12,fontWeight:700,cursor:savingPastille?"default":"pointer",fontFamily:"inherit",opacity:savingPastille?0.6:1}}>{savingPastille?"Enregistrement...":"Enregistrer"}</button>
-            {savedPastille && <span style={{color:"#22c55e",fontSize:12,fontWeight:600}}>Enregistré. Rechargez le plan pour voir le rendu.</span>}
           </div>
         </Card>
       )}
@@ -11799,6 +11761,16 @@ function posteLabelFontSize(label, base) {
 
 function PlanImplantation({ seuilsGlobaux }) {
   const [postes, setPostes]           = useState(POSTES_INIT.map(p=>({...p})));
+  const [pastCfg, setPastCfg] = useState({ size:PASTILLE_CONFIG.size, labelColor:PASTILLE_CONFIG.labelColor, labelSize:PASTILLE_CONFIG.labelSize, cercleSize:PASTILLE_CONFIG.cercleSize, cercleColor:PASTILLE_CONFIG.cercleColor });
+  const [savingPast, setSavingPast] = useState(false);
+  const [savedPast, setSavedPast] = useState(false);
+  async function savePastCfg() {
+    setSavingPast(true);
+    var cfg = { size:parseInt(pastCfg.size)||22, labelColor:pastCfg.labelColor||"#ffffff", labelSize:parseInt(pastCfg.labelSize)||7, cercleSize:(parseInt(pastCfg.cercleSize)||0), cercleColor:pastCfg.cercleColor||"#ffffff" };
+    PASTILLE_CONFIG.size=cfg.size; PASTILLE_CONFIG.labelColor=cfg.labelColor; PASTILLE_CONFIG.labelSize=cfg.labelSize; PASTILLE_CONFIG.cercleSize=cfg.cercleSize; PASTILLE_CONFIG.cercleColor=cfg.cercleColor;
+    await sbFetch("config_affichage", "POST", { id:"main", pastille_size:cfg.size, label_color:cfg.labelColor, label_size:cfg.labelSize, cercle_size:cfg.cercleSize, cercle_color:cfg.cercleColor }, { Prefer:"resolution=merge-duplicates" });
+    setSavingPast(false); setSavedPast(true); setTimeout(function(){ setSavedPast(false); }, 2000);
+  }
   const [passages, setPassages]       = useState([]);
   const [plans, setPlans]             = useState([]);
   const [posByPlan, setPosByPlan]     = useState({"plan-masse":[]});
@@ -12288,10 +12260,10 @@ function PlanImplantation({ seuilsGlobaux }) {
         const y = (parseFloat(pt.y)/100) * 600;
         const label = posteLabel(p.id);
         const ns = "http://www.w3.org/2000/svg";
-        svgClone.appendChild(svgPastilleForme(posteFormes[categorieForme(p)]||"rond", x, y, 12, col, ns));
+        svgClone.appendChild(svgPastilleForme(posteFormes[categorieForme(p)]||"rond", x, y, (PASTILLE_CONFIG.size/2), col, ns));
         const text = document.createElementNS(ns, "text");
-        text.setAttribute("x", x); text.setAttribute("y", y+3); text.setAttribute("font-size", posteLabelFontSize(label,8));
-        text.setAttribute("fill", "#fff"); text.setAttribute("text-anchor", "middle"); text.setAttribute("font-weight", "900");
+        text.setAttribute("x", x); text.setAttribute("y", y+3); text.setAttribute("font-size", posteLabelFontSize(label,PASTILLE_CONFIG.labelSize));
+        text.setAttribute("fill", PASTILLE_CONFIG.labelColor); text.setAttribute("text-anchor", "middle"); text.setAttribute("font-weight", "900");
         text.textContent = label;
         svgClone.appendChild(text);
       });
@@ -12370,15 +12342,15 @@ function PlanImplantation({ seuilsGlobaux }) {
         const col = getPosteColor(p, selDate);
         const x = (parseFloat(pt.x)/100) * img.width;
         const y = (parseFloat(pt.y)/100) * img.height;
-        const r = 12;
+        const r = (PASTILLE_CONFIG.size/2);
 
         // Pastille (forme selon le type de poste)
         canvasPastilleForme(ctx, posteFormes[categorieForme(p)]||"rond", x, y, r, col);
 
         // Label
         const label = posteLabel(p.id);
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold "+posteLabelFontSize(label,8)+"px sans-serif";
+        ctx.fillStyle = PASTILLE_CONFIG.labelColor;
+        ctx.font = "bold "+posteLabelFontSize(label,PASTILLE_CONFIG.labelSize)+"px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(label, x, y);
@@ -13074,6 +13046,25 @@ function PlanImplantation({ seuilsGlobaux }) {
       {showFormesEditor && (
         <div style={{ marginTop:10, background:"#243352", border:"1px solid #3d5270", borderRadius:10, padding:14 }}>
           <div style={{ fontSize:12, color:"#94a3b8", fontWeight:700, marginBottom:10 }}>Gestion des pastilles — forme, couleur (en mode Type), et affichage dans les legendes</div>
+          <div style={{ display:"flex", gap:20, flexWrap:"wrap", alignItems:"flex-start", marginBottom:14, paddingBottom:14, borderBottom:"1px solid #3d5270" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, flex:1, minWidth:240 }}>
+              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Taille pastille (px)</label><input type="number" value={pastCfg.size} onChange={e=>setPastCfg(p=>({...p,size:e.target.value}))} style={{background:"#1a2540",border:"1px solid #3d5270",borderRadius:6,padding:"4px 8px",color:"#f1f5f9",fontSize:11,fontFamily:"inherit",width:"100%",boxSizing:"border-box"}}/></div>
+              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Taille du nom (px)</label><input type="number" value={pastCfg.labelSize} onChange={e=>setPastCfg(p=>({...p,labelSize:e.target.value}))} style={{background:"#1a2540",border:"1px solid #3d5270",borderRadius:6,padding:"4px 8px",color:"#f1f5f9",fontSize:11,fontFamily:"inherit",width:"100%",boxSizing:"border-box"}}/></div>
+              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Couleur du nom</label><input type="color" value={pastCfg.labelColor} onChange={e=>setPastCfg(p=>({...p,labelColor:e.target.value}))} style={{width:"100%",height:28,border:"1px solid #3d5270",borderRadius:6,background:"#1a2540",padding:2,boxSizing:"border-box"}}/></div>
+              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Epaisseur du cercle (px)</label><input type="number" value={pastCfg.cercleSize} onChange={e=>setPastCfg(p=>({...p,cercleSize:e.target.value}))} style={{background:"#1a2540",border:"1px solid #3d5270",borderRadius:6,padding:"4px 8px",color:"#f1f5f9",fontSize:11,fontFamily:"inherit",width:"100%",boxSizing:"border-box"}}/></div>
+              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Couleur du cercle</label><input type="color" value={pastCfg.cercleColor} onChange={e=>setPastCfg(p=>({...p,cercleColor:e.target.value}))} style={{width:"100%",height:28,border:"1px solid #3d5270",borderRadius:6,background:"#1a2540",padding:2,boxSizing:"border-box"}}/></div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+              <div style={{ fontSize:9, color:"#7a90aa" }}>Aperçu</div>
+              <div style={{ width:120, height:74, background:"#0f1e38", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <div style={{ width:(Number(pastCfg.size)||22), height:(Number(pastCfg.size)||22), borderRadius:"50%", background:"#ef4444", border:((Number(pastCfg.cercleSize)||0)+"px solid "+(pastCfg.cercleColor||"#ffffff")), display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 2px 8px rgba(0,0,0,0.7)", boxSizing:"border-box" }}>
+                  <span style={{ fontSize:(Number(pastCfg.labelSize)||7), fontWeight:900, color:(pastCfg.labelColor||"#ffffff"), textShadow:"0 1px 2px rgba(0,0,0,0.6)" }}>RE1</span>
+                </div>
+              </div>
+              <button onClick={savePastCfg} disabled={savingPast} style={{ background:"#0ea5e9", color:"#fff", border:"none", borderRadius:7, padding:"6px 14px", fontSize:11, fontWeight:700, cursor:savingPast?"default":"pointer", fontFamily:"inherit", opacity:savingPast?0.6:1 }}>{savingPast?"...":"Enregistrer"}</button>
+              {savedPast && <span style={{ color:"#22c55e", fontSize:10, fontWeight:600 }}>Enregistré</span>}
+            </div>
+          </div>
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             {[["RE","Rongeurs exterieurs (RE)"],["RI","Rongeurs interieurs (RI)"],["Blattes","Blattes"],["Insectes volants","Insectes volants"],["Teignes","Teignes"],["IPS","IPS"]].map(([cat,lib])=>(
               <div key={cat} style={{ display:"flex", alignItems:"center", gap:10 }}>
