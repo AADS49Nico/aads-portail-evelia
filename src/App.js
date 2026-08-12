@@ -758,6 +758,21 @@ export function estConsoPartielle(v) {
 export function estConsoQuelconque(v) {
   return estConsoTotale(v) || estConsoPartielle(v);
 }
+// Classification exterieur/interieur d un poste : la colonne type (RE/RI) fait foi ;
+// a defaut seulement (ancien poste sans type), on retombe sur la regex de l identifiant.
+function posteEstExt(p) {
+  var t = (p && p.type) || "";
+  if (t === "RE") return true;
+  if (t === "RI") return false;
+  return /^RE/i.test((p && p.id) || "");
+}
+function posteEstInt(p) {
+  var t = (p && p.type) || "";
+  if (t === "RI") return true;
+  if (t === "RE") return false;
+  var id = (p && p.id) || "";
+  return /^(RI|R\d|S\d)/i.test(id) && !/^RE/i.test(id);
+}
 
 // Couleur d un poste selon son type et ses seuils (meme logique que les pastilles
 // du plan) : "rouge" (seuil critique), "orange" (seuil vigilance) ou "vert".
@@ -12041,8 +12056,8 @@ function PlanImplantation({ seuilsGlobaux }) {
     const totalCap = (parseInt(s.cap_souris||0))+(parseInt(s.cap_ratBrun||0))+(parseInt(s.cap_ratNoir||0));
     if (totalCap > 0) {
       const id = poste.id || "";
-      const isExt = /^RE/i.test(id);
-      const isInt = /^(RI|R\d|S\d)/i.test(id) && !isExt;
+      const isExt = posteEstExt(poste);
+      const isInt = posteEstInt(poste);
       if (isExt) {
         const sl = (seuilsGlobaux?.rongeursExt?.leger) ?? 1;
         const sm = (seuilsGlobaux?.rongeursExt?.moyen) ?? 3;
@@ -12176,8 +12191,8 @@ function PlanImplantation({ seuilsGlobaux }) {
     const nuisible = p.nuisible||"Rongeurs";
     const id = p.id||"";
     return filterNuisibleArr.some(f => {
-      if (f === "__RE") return /^RE/i.test(id);
-      if (f === "__RI") return /^(RI|R\d|S\d)/i.test(id) && !/^RE/i.test(id);
+      if (f === "__RE") return posteEstExt(p);
+      if (f === "__RI") return posteEstInt(p);
       return nuisible === f;
     });
   });
@@ -12282,7 +12297,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       pts.forEach(pt => {
         const p = postes.find(x=>x.id===pt.id);
         if (!p) return;
-        if (filterNuisibleArr.length>0 && !filterNuisibleArr.some(f=>{const id=p.id||"";if(f==="__RE")return /^RE/i.test(id);if(f==="__RI")return /^(RI|R\d|S\d)/i.test(id)&&!/^RE/i.test(id);return (p.nuisible||"Rongeurs")===f;})) return;
+        if (filterNuisibleArr.length>0 && !filterNuisibleArr.some(f=>{if(f==="__RE")return posteEstExt(p);if(f==="__RI")return posteEstInt(p);return (p.nuisible||"Rongeurs")===f;})) return;
         const col = getPosteColor(p, selDate);
         const x = (parseFloat(pt.x)/100) * 900;
         const y = (parseFloat(pt.y)/100) * 600;
@@ -12366,7 +12381,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       pts.forEach(pt => {
         const p = postes.find(x=>x.id===pt.id);
         if (!p) return;
-        if (filterNuisibleArr.length>0 && !filterNuisibleArr.some(f=>{const id=p.id||"";if(f==="__RE")return /^RE/i.test(id);if(f==="__RI")return /^(RI|R\d|S\d)/i.test(id)&&!/^RE/i.test(id);return (p.nuisible||"Rongeurs")===f;})) return;
+        if (filterNuisibleArr.length>0 && !filterNuisibleArr.some(f=>{if(f==="__RE")return posteEstExt(p);if(f==="__RI")return posteEstInt(p);return (p.nuisible||"Rongeurs")===f;})) return;
         const col = getPosteColor(p, selDate);
         const x = (parseFloat(pt.x)/100) * img.width;
         const y = (parseFloat(pt.y)/100) * img.height;
@@ -12554,7 +12569,7 @@ function PlanImplantation({ seuilsGlobaux }) {
           </button>
           {/* Rongeurs Extérieurs */}
           {(()=>{
-            const count = postes.filter(p=>p.id&&/^RE/i.test(p.id)).length;
+            const count = postes.filter(p=>posteEstExt(p)).length;
             if(count===0 || nuisiblesMasques.indexOf("__RE")>=0) return null;
             const active = filterNuisibleArr.includes("__RE");
             const colRE = nuisibleColors["__RE"]||"#1e40af";
@@ -12568,7 +12583,7 @@ function PlanImplantation({ seuilsGlobaux }) {
           })()}
           {/* Rongeurs Intérieurs */}
           {(()=>{
-            const count = postes.filter(p=>p.id&&/^(RI|R\d|S\d)/i.test(p.id)&&!/^RE/i.test(p.id)).length;
+            const count = postes.filter(p=>posteEstInt(p)).length;
             if(count===0 || nuisiblesMasques.indexOf("__RI")>=0) return null;
             const active = filterNuisibleArr.includes("__RI");
             const colRI = nuisibleColors["__RI"]||"#60a5fa";
@@ -12957,7 +12972,7 @@ function PlanImplantation({ seuilsGlobaux }) {
             {planPostes.map(pt=>{
               const p=postes.find(p=>p.id===pt.id);
               if(!p)return null;
-              if(filterNuisibleArr.length>0&&!filterNuisibleArr.some(f=>{const id=p.id||"";if(f==="__RE")return /^RE/i.test(id);if(f==="__RI")return /^(RI|R\d|S\d)/i.test(id)&&!/^RE/i.test(id);return (p.nuisible||"Rongeurs")===f;}))return null;
+              if(filterNuisibleArr.length>0&&!filterNuisibleArr.some(f=>{if(f==="__RE")return posteEstExt(p);if(f==="__RI")return posteEstInt(p);return (p.nuisible||"Rongeurs")===f;}))return null;
               const col=getPosteColor(p,selDate);
               const isHov=hover===pt.id;
               const isMov=movingPoste===pt.id;
