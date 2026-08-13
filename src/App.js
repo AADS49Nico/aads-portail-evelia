@@ -322,8 +322,8 @@ async function sbDelete(table, id) {
 // Place ou deplace un poste sur un plan. Un poste ne peut etre que sur un seul plan a la fois
 // (contrainte unique en base sur contrat+poste_id). Si le poste existe deja ailleurs, on le
 // deplace (UPDATE plan_id+x+y) au lieu de tenter un INSERT qui echouerait en doublon.
-async function savePostePosition(planId, posteId, x, y) {
-  const posData = { id: planId+"_"+posteId, poste_id:posteId, plan_id:planId, x, y, contrat:CLIENT_CONFIG.contrat, site:SITE_ACTIF };
+async function savePostePosition(planId, posteId, x, y, page) {
+  const posData = { id: planId+"_"+posteId, poste_id:posteId, plan_id:planId, x, y, page: page||0, contrat:CLIENT_CONFIG.contrat, site:SITE_ACTIF };
 
   // Hors ligne — sauvegarder en attente
   if (!navigator.onLine) {
@@ -345,7 +345,7 @@ async function savePostePosition(planId, posteId, x, y) {
       Prefer: "return=representation",
     };
     const url = SUPABASE_URL + "/rest/v1/poste_positions?poste_id=eq." + encodeURIComponent(posteId) + "&contrat=eq." + CLIENT_CONFIG.contrat + filtreSite("poste_positions");
-    const res = await fetch(url, { method: "PATCH", headers, body: JSON.stringify({ id: planId + "_" + posteId, plan_id: planId, x, y }) });
+    const res = await fetch(url, { method: "PATCH", headers, body: JSON.stringify({ id: planId + "_" + posteId, plan_id: planId, x, y, page: page||0 }) });
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       console.error("Supabase error (deplacement poste):", res.status, errText);
@@ -11841,6 +11841,7 @@ function PlanImplantation({ seuilsGlobaux }) {
   const [showAddPlan, setShowAddPlan] = useState(false);
   const [newPlanLabel, setNewPlanLabel] = useState("");
   const [newPlanImg, setNewPlanImg]   = useState(null);
+  const [activePageByPlan, setActivePageByPlan] = useState({});
   const [editingPlanId, setEditingPlanId] = useState(null);
   const [editingPlanLabel, setEditingPlanLabel] = useState("");
   const [hover, setHover]             = useState(null);
@@ -11951,7 +11952,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       sbGet("plans").catch(()=>[]),
       sbGet("plans_dessines").catch(()=>[]),
     ]).then(([planImgs, planDessines]) => {
-      const imgPlans = (planImgs||[]).map(p=>({...p, img: p.img_url || p.img}));
+      const imgPlans = (planImgs||[]).map(p=>{ var imgs=[]; try { imgs = p.images ? (typeof p.images==="string"?JSON.parse(p.images):p.images) : []; } catch(_e) { imgs=[]; } if (!Array.isArray(imgs)) imgs=[]; var first = p.img_url || p.img || ""; if (imgs.length===0 && first) imgs=[first]; return {...p, img: imgs[0]||first, images: imgs}; });
       const parseEls = e => typeof e==="string" ? JSON.parse(e||"[]") : (e||[]);
       const dessines = [];
       (planDessines||[]).forEach(d=>{
@@ -11984,7 +11985,7 @@ function PlanImplantation({ seuilsGlobaux }) {
     sbGet("poste_positions").then(data=>{
       if(data&&data.length>0){
         const byPlan={};
-        data.forEach(d=>{if(!byPlan[d.plan_id])byPlan[d.plan_id]=[];byPlan[d.plan_id].push({id:d.poste_id||d.id,x:d.x,y:d.y});});
+        data.forEach(d=>{if(!byPlan[d.plan_id])byPlan[d.plan_id]=[];byPlan[d.plan_id].push({id:d.poste_id||d.id,x:d.x,y:d.y,page:d.page||0});});
         setPosByPlan(prev=>({...prev,...byPlan}));
       }
     }).catch(()=>{});
@@ -12185,8 +12186,10 @@ function PlanImplantation({ seuilsGlobaux }) {
     }
   }, [filterYear]);
 
-  const planPostes = getPts(activePlan);
   const activePlanData = plans.find(p=>p.id===activePlan);
+  const planImagesArr = (activePlanData && activePlanData.images && activePlanData.images.length) ? activePlanData.images : (activePlanData && activePlanData.img ? [activePlanData.img] : []);
+  const activePage = Math.min(activePageByPlan[activePlan] || 0, Math.max(0, planImagesArr.length - 1));
+  const planPostes = getPts(activePlan).filter(pt => (pt.page||0) === activePage);
   const filteredPostes = filterNuisibleArr.length===0 ? postes : postes.filter(p => {
     const nuisible = p.nuisible||"Rongeurs";
     const id = p.id||"";
@@ -12210,7 +12213,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       const movedId = movingPoste;
       setMovingPoste(null);
       try {
-        await savePostePosition(activePlan, movedId, parseFloat(xPct), parseFloat(yPct));
+        await savePostePosition(activePlan, movedId, parseFloat(xPct), parseFloat(yPct), activePage);
       } catch(err) {
         alert("Le deplacement du poste "+movedId+" n'a pas pu etre enregistre sur le serveur ("+(err.message||err)+"). Reessayez.");
       }
@@ -12219,11 +12222,11 @@ function PlanImplantation({ seuilsGlobaux }) {
     if (placingPoste) {
       if (getPts(activePlan).find(pt=>pt.id===placingPoste)) return;
       const placedId = placingPoste;
-      const pts = [...getPts(activePlan),{id:placedId,x:parseFloat(xPct),y:parseFloat(yPct)}];
+      const pts = [...getPts(activePlan),{id:placedId,x:parseFloat(xPct),y:parseFloat(yPct),page:activePage}];
       setPts(activePlan,pts);
       setPlacingPoste("");
       try {
-        await savePostePosition(activePlan, placedId, parseFloat(xPct), parseFloat(yPct));
+        await savePostePosition(activePlan, placedId, parseFloat(xPct), parseFloat(yPct), activePage);
       } catch(err) {
         alert("Le poste "+placedId+" n'a pas pu etre enregistre sur le serveur ("+(err.message||err)+"). Reessayez de l'ajouter.");
       }
@@ -12238,9 +12241,9 @@ function PlanImplantation({ seuilsGlobaux }) {
   function handleAddPlan() {
     const label=newPlanLabel.trim()||("Plan "+(plans.length+1));
     const id="plan-"+Date.now();
-    setPlans(prev=>[...prev,{id,label,img:newPlanImg}]);
+    setPlans(prev=>[...prev,{id,label,img:newPlanImg,images:newPlanImg?[newPlanImg]:[]}]);
     setPosByPlan(prev=>({...prev,[id]:[]}));
-    sbUpsert("plans",{id,contrat:CLIENT_CONFIG.contrat,label,img_url:newPlanImg||""});
+    sbUpsert("plans",{id,contrat:CLIENT_CONFIG.contrat,label,img_url:newPlanImg||"",images:JSON.stringify(newPlanImg?[newPlanImg]:[])});
     setNewPlanLabel("");setNewPlanImg(null);setShowAddPlan(false);
     setActivePlanPersisted(id);
   }
@@ -12248,6 +12251,23 @@ function PlanImplantation({ seuilsGlobaux }) {
   function handlePlanUpload(e) {
     const file=e.target.files[0];if(!file)return;
     const r=new FileReader();r.onload=ev=>setNewPlanImg(ev.target.result);r.readAsDataURL(file);
+  }
+
+  // Ajoute une image (page) au plan courant. Les postes deja poses ne bougent pas.
+  function handleAddImageToPlan(e) {
+    const file=e.target.files[0]; if(!file){ return; }
+    const r=new FileReader();
+    r.onload=ev=>{
+      const dataUrl=ev.target.result;
+      const plan=plans.find(p=>p.id===activePlan); if(!plan) return;
+      var imgs = (plan.images&&plan.images.length)?plan.images.slice():(plan.img?[plan.img]:[]);
+      imgs.push(dataUrl);
+      setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:imgs[0]}:p));
+      sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url: imgs[0]||"" });
+      setActivePageByPlan(prev=>({...prev,[activePlan]:imgs.length-1}));
+    };
+    r.readAsDataURL(file);
+    e.target.value="";
   }
 
   function deletePlan(id) {
@@ -12697,8 +12717,8 @@ function PlanImplantation({ seuilsGlobaux }) {
                         const colonne = Math.floor(i/parCol), rang = i%parCol;
                         const x = parseFloat((4 + colonne*5).toFixed(2));
                         const y = parseFloat((4 + rang*pasY).toFixed(2));
-                        newPts.push({id, x, y});
-                        try { await savePostePosition(activePlan, id, x, y); }
+                        newPts.push({id, x, y, page: activePage});
+                        try { await savePostePosition(activePlan, id, x, y, activePage); }
                         catch(e) { failed.push({id, message: e.message||String(e)}); }
                       }
                       setPrevPosByPlan(posByPlan); setPts(activePlan, newPts);
@@ -12728,8 +12748,8 @@ function PlanImplantation({ seuilsGlobaux }) {
                 const col = i%cols, row = Math.floor(i/cols);
                 const x = parseFloat((5 + col*(90/cols)).toFixed(2));
                 const y = parseFloat((5 + row*(90/Math.ceil(nonPlaces.length/cols))).toFixed(2));
-                newPts.push({id:p.id, x, y});
-                try { await savePostePosition(activePlan, p.id, x, y); }
+                newPts.push({id:p.id, x, y, page:activePage});
+                try { await savePostePosition(activePlan, p.id, x, y, activePage); }
                 catch(e) { failed.push({id:p.id, message:e.message||String(e)}); }
               }
               setPrevPosByPlan(posByPlan); setPts(activePlan, newPts);
@@ -12943,13 +12963,28 @@ function PlanImplantation({ seuilsGlobaux }) {
           </div>
         ) : (
         <>
+        {activePlanData && !activePlanData.dessine && (
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+            {planImagesArr.length>1 && planImagesArr.map((_img,idx)=>(
+              <button key={idx} onClick={()=>setActivePageByPlan(prev=>({...prev,[activePlan]:idx}))}
+                style={{background:activePage===idx?"#1d4ed8":"#243352",color:activePage===idx?"#fff":"#94a3b8",border:"1px solid "+(activePage===idx?"#3b82f6":"#3d5270"),borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                Page {idx+1}
+              </button>
+            ))}
+            <label style={{background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              + Ajouter une image
+              <input type="file" accept="image/*" style={{display:"none"}} onChange={handleAddImageToPlan}/>
+            </label>
+            {planImagesArr.length>1 && <span style={{fontSize:10,color:"#5a7090"}}>{planImagesArr.length} pages — chaque poste est posé sur la page affichée</span>}
+          </div>
+        )}
         {/* Plan image */}
         <div style={{overflowX:"auto",overflowY:"visible"}}>
           <div id="plan-export-zone"
             style={{position:"relative",width:zoom+"%",minWidth:600,cursor:placingPoste||movingPoste?"crosshair":"default"}}
             onClick={handlePlanClick}>
-            {activePlanData&&activePlanData.img
-              ? <img src={activePlanData.img} alt={(activePlanData&&activePlanData.label)} style={{width:"100%",display:"block",userSelect:"none"}} draggable={false}/>
+            {planImagesArr[activePage]
+              ? <img src={planImagesArr[activePage]} alt={(activePlanData&&activePlanData.label)} style={{width:"100%",display:"block",userSelect:"none"}} draggable={false}/>
               : activePlanData&&activePlanData.dessine
               ? <svg viewBox="0 0 900 600" style={{width:"100%",display:"block",background:"#fff"}}>
                   {activePlanData.backgroundImg && <image href={activePlanData.backgroundImg} x="0" y="0" width="900" height="600" preserveAspectRatio="xMidYMid meet"/>}
