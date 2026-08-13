@@ -11952,7 +11952,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       sbGet("plans").catch(()=>[]),
       sbGet("plans_dessines").catch(()=>[]),
     ]).then(([planImgs, planDessines]) => {
-      const imgPlans = (planImgs||[]).map(p=>{ var imgs=[]; try { imgs = p.images ? (typeof p.images==="string"?JSON.parse(p.images):p.images) : []; } catch(_e) { imgs=[]; } if (!Array.isArray(imgs)) imgs=[]; var first = p.img_url || p.img || ""; if (imgs.length===0 && first) imgs=[first]; return {...p, img: imgs[0]||first, images: imgs}; });
+      const imgPlans = (planImgs||[]).map(p=>{ var raw=[]; try { raw = p.images ? (typeof p.images==="string"?JSON.parse(p.images):p.images) : []; } catch(_e) { raw=[]; } if (!Array.isArray(raw)) raw=[]; var imgs = raw.map(function(it){ return (it && typeof it==="object") ? {url:it.url||"", name:it.name||""} : {url:it||"", name:""}; }).filter(function(it){ return it.url; }); var first = p.img_url || p.img || ""; if (imgs.length===0 && first) imgs=[{url:first, name:""}]; return {...p, img:(imgs[0]&&imgs[0].url)||first, images: imgs}; });
       const parseEls = e => typeof e==="string" ? JSON.parse(e||"[]") : (e||[]);
       const dessines = [];
       (planDessines||[]).forEach(d=>{
@@ -12187,7 +12187,7 @@ function PlanImplantation({ seuilsGlobaux }) {
   }, [filterYear]);
 
   const activePlanData = plans.find(p=>p.id===activePlan);
-  const planImagesArr = (activePlanData && activePlanData.images && activePlanData.images.length) ? activePlanData.images : (activePlanData && activePlanData.img ? [activePlanData.img] : []);
+  const planImagesArr = (activePlanData && activePlanData.images && activePlanData.images.length) ? activePlanData.images : (activePlanData && activePlanData.img ? [{url:activePlanData.img, name:""}] : []);
   const activePage = Math.min(activePageByPlan[activePlan] || 0, Math.max(0, planImagesArr.length - 1));
   const planPostes = getPts(activePlan).filter(pt => (pt.page||0) === activePage);
   const filteredPostes = filterNuisibleArr.length===0 ? postes : postes.filter(p => {
@@ -12241,9 +12241,10 @@ function PlanImplantation({ seuilsGlobaux }) {
   function handleAddPlan() {
     const label=newPlanLabel.trim()||("Plan "+(plans.length+1));
     const id="plan-"+Date.now();
-    setPlans(prev=>[...prev,{id,label,img:newPlanImg,images:newPlanImg?[newPlanImg]:[]}]);
+    const initImgs = newPlanImg?[{url:newPlanImg, name:label}]:[];
+    setPlans(prev=>[...prev,{id,label,img:newPlanImg,images:initImgs}]);
     setPosByPlan(prev=>({...prev,[id]:[]}));
-    sbUpsert("plans",{id,contrat:CLIENT_CONFIG.contrat,label,img_url:newPlanImg||"",images:JSON.stringify(newPlanImg?[newPlanImg]:[])});
+    sbUpsert("plans",{id,contrat:CLIENT_CONFIG.contrat,label,img_url:newPlanImg||"",images:JSON.stringify(initImgs)});
     setNewPlanLabel("");setNewPlanImg(null);setShowAddPlan(false);
     setActivePlanPersisted(id);
   }
@@ -12254,20 +12255,35 @@ function PlanImplantation({ seuilsGlobaux }) {
   }
 
   // Ajoute une image (page) au plan courant. Les postes deja poses ne bougent pas.
+  function normImgs(plan){
+    var src = (plan.images&&plan.images.length)?plan.images:(plan.img?[plan.img]:[]);
+    return src.map(function(it){ return (it&&typeof it==="object")?{url:it.url||"", name:it.name||""}:{url:it||"", name:""}; }).filter(function(it){ return it.url; });
+  }
   function handleAddImageToPlan(e) {
     const file=e.target.files[0]; if(!file){ return; }
     const r=new FileReader();
     r.onload=ev=>{
       const dataUrl=ev.target.result;
       const plan=plans.find(p=>p.id===activePlan); if(!plan) return;
-      var imgs = (plan.images&&plan.images.length)?plan.images.slice():(plan.img?[plan.img]:[]);
-      imgs.push(dataUrl);
-      setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:imgs[0]}:p));
-      sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url: imgs[0]||"" });
+      var imgs = normImgs(plan);
+      var nm = window.prompt("Nom de ce plan (ex: RDC, Etage 1, Sous-sol) :", "Plan "+(imgs.length+1)) || ("Plan "+(imgs.length+1));
+      imgs.push({url:dataUrl, name:nm});
+      setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:(imgs[0]&&imgs[0].url)||""}:p));
+      sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
       setActivePageByPlan(prev=>({...prev,[activePlan]:imgs.length-1}));
     };
     r.readAsDataURL(file);
     e.target.value="";
+  }
+  function renameImage(idx){
+    const plan=plans.find(p=>p.id===activePlan); if(!plan) return;
+    var imgs = normImgs(plan);
+    if(!imgs[idx]) return;
+    var nm = window.prompt("Nom du plan :", imgs[idx].name||("Plan "+(idx+1)));
+    if(nm===null) return;
+    imgs[idx]={url:imgs[idx].url, name:nm};
+    setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs}:p));
+    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
   }
 
   function deletePlan(id) {
@@ -12299,10 +12315,14 @@ function PlanImplantation({ seuilsGlobaux }) {
     setEditingPlanId(null);
   }
 
-  function exportPlanPdf() {
+  function exportPlanPdf(pageIdxArg) {
     const activePlanData2 = plans.find(p=>p.id===activePlan);
     if (!activePlanData2) { alert("Aucun plan a exporter"); return; }
-    const pts = getPts(activePlan);
+    const pageIdx = (typeof pageIdxArg==="number") ? pageIdxArg : activePage;
+    const imgsArr = (activePlanData2.images&&activePlanData2.images.length)?activePlanData2.images.map(function(it){return (it&&typeof it==="object")?{url:it.url||"",name:it.name||""}:{url:it||"",name:""};}):(activePlanData2.img?[{url:activePlanData2.img,name:""}]:[]);
+    const curImg = imgsArr[pageIdx] || imgsArr[0] || null;
+    const pageName = (curImg&&curImg.name) ? curImg.name : "";
+    const pts = getPts(activePlan).filter(pt => (pt.page||0)===pageIdx);
 
     // Export pour plans dessinés (sans image PNG/JPG)
     if (!activePlanData2.img && activePlanData2.dessine) {
@@ -12347,7 +12367,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       titleEl.setAttribute("x","10"); titleEl.setAttribute("y","18");
       titleEl.setAttribute("font-size","13"); titleEl.setAttribute("font-weight","bold");
       titleEl.setAttribute("fill","#0f2864"); titleEl.setAttribute("font-family","Arial,sans-serif");
-      titleEl.textContent = activePlanData2.label+" - "+CLIENT_CONFIG.nom+(selDate && modeColor!=="type"?" - "+selDate:"");
+      titleEl.textContent = activePlanData2.label+(pageName?" - "+pageName:"")+" - "+CLIENT_CONFIG.nom+(selDate && modeColor!=="type"?" - "+selDate:"");
       svgClone.insertBefore(titleEl, svgClone.firstChild);
 
       // Logo client en haut à droite dans le SVG
@@ -12382,7 +12402,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       return;
     }
 
-    if (!activePlanData2.img) { alert("Aucune image à exporter"); return; }
+    if (!curImg || !curImg.url) { alert("Aucune image à exporter"); return; }
 
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -12447,7 +12467,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       ctx.font = "bold 14px Arial,sans-serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText(activePlanData2.label+" - "+CLIENT_CONFIG.nom+(selDate && modeColor!=="type"?" - "+selDate:""), 10, 16);
+      ctx.fillText(activePlanData2.label+(pageName?" - "+pageName:"")+" - "+CLIENT_CONFIG.nom+(selDate && modeColor!=="type"?" - "+selDate:""), 10, 16);
 
       // Open in new window — avec logo client en haut à droite via HTML
       const dataUrl = canvas.toDataURL("image/png");
@@ -12459,11 +12479,17 @@ function PlanImplantation({ seuilsGlobaux }) {
       w.document.close();
       setTimeout(()=>w.print(),800);
     };
-    img.src = activePlanData2.img;
+    img.src = curImg.url;
   }
 
   function exportAllPlans() {
-    exportPlanPdf();
+    const plan = plans.find(p=>p.id===activePlan);
+    const imgsArr = (plan&&plan.images&&plan.images.length)?plan.images:[];
+    if (imgsArr.length>1) {
+      for (let i=0;i<imgsArr.length;i++) { (function(idx){ setTimeout(function(){ exportPlanPdf(idx); }, idx*1200); })(i); }
+    } else {
+      exportPlanPdf();
+    }
   }
 
   return (
@@ -12967,15 +12993,17 @@ function PlanImplantation({ seuilsGlobaux }) {
           <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
             {planImagesArr.length>1 && planImagesArr.map((_img,idx)=>(
               <button key={idx} onClick={()=>setActivePageByPlan(prev=>({...prev,[activePlan]:idx}))}
+                onDoubleClick={()=>renameImage(idx)}
+                title="Double-cliquez pour renommer"
                 style={{background:activePage===idx?"#1d4ed8":"#243352",color:activePage===idx?"#fff":"#94a3b8",border:"1px solid "+(activePage===idx?"#3b82f6":"#3d5270"),borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                Page {idx+1}
+                {(_img&&_img.name)?_img.name:("Plan "+(idx+1))}
               </button>
             ))}
             <label style={{background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Ajouter une image
               <input type="file" accept="image/*" style={{display:"none"}} onChange={handleAddImageToPlan}/>
             </label>
-            {planImagesArr.length>1 && <span style={{fontSize:10,color:"#5a7090"}}>{planImagesArr.length} pages — chaque poste est posé sur la page affichée</span>}
+            {planImagesArr.length>1 && <span style={{fontSize:10,color:"#5a7090"}}>{planImagesArr.length} plans — chaque poste est posé sur le plan affiché</span>}
           </div>
         )}
         {/* Plan image */}
@@ -12984,7 +13012,7 @@ function PlanImplantation({ seuilsGlobaux }) {
             style={{position:"relative",width:zoom+"%",minWidth:600,cursor:placingPoste||movingPoste?"crosshair":"default"}}
             onClick={handlePlanClick}>
             {planImagesArr[activePage]
-              ? <img src={planImagesArr[activePage]} alt={(activePlanData&&activePlanData.label)} style={{width:"100%",display:"block",userSelect:"none"}} draggable={false}/>
+              ? <img src={planImagesArr[activePage].url} alt={(activePlanData&&activePlanData.label)} style={{width:"100%",display:"block",userSelect:"none"}} draggable={false}/>
               : activePlanData&&activePlanData.dessine
               ? <svg viewBox="0 0 900 600" style={{width:"100%",display:"block",background:"#fff"}}>
                   {activePlanData.backgroundImg && <image href={activePlanData.backgroundImg} x="0" y="0" width="900" height="600" preserveAspectRatio="xMidYMid meet"/>}
@@ -13034,7 +13062,7 @@ function PlanImplantation({ seuilsGlobaux }) {
                       const yPct = Math.max(0,Math.min(100,((ev.clientY-rect.top)/rect.height*100))).toFixed(2);
                       const currentPts = (posByPlanRef.current[activePlan]||[]).map(p=>p.id===pt.id?{...p,x:parseFloat(xPct),y:parseFloat(yPct)}:p);
                       setPts(activePlan, currentPts);
-                      savePostePosition(activePlan, pt.id, parseFloat(xPct), parseFloat(yPct))
+                      savePostePosition(activePlan, pt.id, parseFloat(xPct), parseFloat(yPct), activePage)
                         .catch(err => alert("Le deplacement du poste "+pt.id+" n'a pas pu etre enregistre sur le serveur ("+(err.message||err)+"). Reessayez."));
                     };
                     document.addEventListener("mousemove", onMove);
@@ -13062,7 +13090,7 @@ function PlanImplantation({ seuilsGlobaux }) {
                       const yPct = Math.max(0,Math.min(100,((touch.clientY-rect.top)/rect.height*100))).toFixed(2);
                       const currentPts = (posByPlanRef.current[activePlan]||[]).map(p=>p.id===pt.id?{...p,x:parseFloat(xPct),y:parseFloat(yPct)}:p);
                       setPts(activePlan, currentPts);
-                      savePostePosition(activePlan, pt.id, parseFloat(xPct), parseFloat(yPct))
+                      savePostePosition(activePlan, pt.id, parseFloat(xPct), parseFloat(yPct), activePage)
                         .catch(err => alert("Le deplacement du poste "+pt.id+" n'a pas pu etre enregistre."));
                     };
                     document.addEventListener("touchmove", onTouchMove, { passive: false });
