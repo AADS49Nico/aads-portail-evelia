@@ -12016,8 +12016,8 @@ function PlanImplantation({ seuilsGlobaux }) {
     return merged[posteId]||null;
   }
 
-  function getPosteColor(poste, date) {
-    if (modeColor==="type") {
+  function getPosteColor(poste, date, forceEtat) {
+    if (!forceEtat && modeColor==="type") {
       const nuisible = poste.nuisible||"Rongeurs";
       if (nuisible==="Rongeurs") {
         if (poste.type==="RE") return nuisibleColors["__RE"]||"#1e40af";
@@ -12026,7 +12026,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       }
       return nuisibleColors[nuisible]||"#7a90aa";
     }
-    if (modeColor==="zone") {
+    if (!forceEtat && modeColor==="zone") {
       const zoneColors = {"Extérieur":"#3b82f6","Locaux techniques":"#f59e0b","Combles / Faux-plafonds":"#8b5cf6","Emballages":"#22c55e","Conditionnement":"#ef4444","Bureaux / R&D":"#06b6d4","Maintenance":"#84cc16","Stockage":"#f97316","Autres":"#7a90aa"};
       return zoneColors[poste.macro]||"#7a90aa";
     }
@@ -12153,7 +12153,7 @@ function PlanImplantation({ seuilsGlobaux }) {
     }
     let tot=0, part=0;
     postesRelev.forEach(p=>{
-      const col = getPosteColor(p, date);
+      const col = getPosteColor(p, date, true);
       if (col==="#ef4444") tot++;
       else if (col==="#f59e0b") part++;
     });
