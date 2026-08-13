@@ -11968,10 +11968,11 @@ function PlanImplantation({ seuilsGlobaux }) {
           base.img = null; // le rendu passe par la branche SVG, sinon les annotations sont masquees
           if (d.label) base.label = d.label;
         } else {
-          dessines.push({id:"dessine_"+d.id, label:d.label, img:null, dessine:true, elements: parseEls(d.elements), backgroundImg: d.background_img||null});
+          dessines.push({id:"dessine_"+d.id, label:d.label, img:null, dessine:true, elements: parseEls(d.elements), backgroundImg: d.background_img||null, ordre:d.ordre});
         }
       });
       const allPlans = [...imgPlans, ...dessines];
+      allPlans.sort(function(a,b){ var oa=(a.ordre===undefined||a.ordre===null||a.ordre==="")?9999:Number(a.ordre); var ob=(b.ordre===undefined||b.ordre===null||b.ordre==="")?9999:Number(b.ordre); return oa-ob; });
       if (allPlans.length > 0) {
         setPlans(allPlans);
         // Restaurer le plan actif sauvegardé, sinon prendre le premier
@@ -12284,6 +12285,49 @@ function PlanImplantation({ seuilsGlobaux }) {
     imgs[idx]={url:imgs[idx].url, name:nm};
     setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs}:p));
     sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
+  }
+  function moveImage(idx, dir){
+    const plan=plans.find(p=>p.id===activePlan); if(!plan) return;
+    var imgs = normImgs(plan);
+    const j = idx+dir;
+    if(j<0||j>=imgs.length) return;
+    var tmp=imgs[idx]; imgs[idx]=imgs[j]; imgs[j]=tmp;
+    const pts = getPts(activePlan);
+    const newPts = pts.map(function(pt){ var pg=pt.page||0; if(pg===idx) return {...pt,page:j}; if(pg===j) return {...pt,page:idx}; return pt; });
+    setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:(imgs[0]&&imgs[0].url)||""}:p));
+    setPts(activePlan,newPts);
+    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
+    newPts.forEach(function(pt){ if((pt.page||0)===idx||(pt.page||0)===j){ savePostePosition(activePlan, pt.id, pt.x, pt.y, pt.page||0).catch(function(){}); } });
+    setActivePageByPlan(prev=>({...prev,[activePlan]:j}));
+  }
+  function deleteImageFromPlan(idx){
+    const plan=plans.find(p=>p.id===activePlan); if(!plan) return;
+    var imgs = normImgs(plan);
+    if(imgs.length<=1){ alert("Un plan doit garder au moins une image. Pour tout retirer, utilisez Supprimer le plan."); return; }
+    const nm = imgs[idx].name||("Plan "+(idx+1));
+    if(!window.confirm("Supprimer le plan \""+nm+"\" et toutes les pastilles posees dessus ?")) return;
+    imgs.splice(idx,1);
+    const pts = getPts(activePlan);
+    const kept = [];
+    pts.forEach(function(pt){ var pg=pt.page||0; if(pg===idx){ sbDelete("poste_positions", activePlan+"_"+pt.id); return; } if(pg>idx){ var np={...pt,page:pg-1}; kept.push(np); savePostePosition(activePlan, np.id, np.x, np.y, np.page).catch(function(){}); } else { kept.push(pt); } });
+    setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:(imgs[0]&&imgs[0].url)||""}:p));
+    setPts(activePlan,kept);
+    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
+    setActivePageByPlan(prev=>({...prev,[activePlan]:Math.max(0, Math.min((prev[activePlan]||0), imgs.length-1))}));
+  }
+  function movePlan(id, dir){
+    const arr = plans.slice();
+    const i = arr.findIndex(p=>p.id===id);
+    if(i<0) return;
+    const j = i+dir;
+    if(j<0||j>=arr.length) return;
+    var tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp;
+    setPlans(arr);
+    arr.forEach(function(p,k){
+      const isPureDessine = p.dessine && !p.annote && String(p.id).indexOf("dessine_")===0;
+      if(isPureDessine){ sbUpdate("plans_dessines", String(p.id).replace("dessine_",""), {ordre:k}); }
+      else { sbUpdate("plans", p.id, {ordre:k}); }
+    });
   }
 
   function deletePlan(id) {
@@ -12677,6 +12721,8 @@ function PlanImplantation({ seuilsGlobaux }) {
                     <div onClick={()=>{ if(isActive){ setShowPlanActions(v=>!v); } else { setActivePlanPersisted(pl.id); setShowPlanActions(true); } }}
                       style={{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",cursor:"pointer",background:isActive?"#243352":"transparent",borderRadius:"8px 8px 0 0",borderTop:isActive?"2px solid #3b82f6":"2px solid transparent",borderLeft:"1px solid "+(isActive?"#3d5270":"transparent"),borderRight:"1px solid "+(isActive?"#3d5270":"transparent"),borderBottom:"none",marginBottom:isActive?-1:0,transition:"all 0.15s"}}>
                       <span style={{fontSize:14,fontWeight:isActive?700:500,color:isActive?"#f1f5f9":"#7a90aa",whiteSpace:"nowrap"}}>{pl.label}</span>
+                      {isActive && <span onClick={e=>{e.stopPropagation();movePlan(pl.id,-1);}} title="Deplacer le plan a gauche" style={{fontSize:11,color:idx===0?"#4b5b74":"#93c5fd",cursor:idx===0?"default":"pointer",padding:"0 1px"}}>◀</span>}
+                      {isActive && <span onClick={e=>{e.stopPropagation();movePlan(pl.id,1);}} title="Deplacer le plan a droite" style={{fontSize:11,color:idx===plans.length-1?"#4b5b74":"#93c5fd",cursor:idx===plans.length-1?"default":"pointer",padding:"0 1px"}}>▶</span>}
                       {isActive && <span style={{fontSize:10,color:"#5a7090"}}>{showPlanActions?"▲":"▼"}</span>}
                     </div>
                   )}
@@ -12992,12 +13038,24 @@ function PlanImplantation({ seuilsGlobaux }) {
         {activePlanData && !activePlanData.dessine && (
           <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
             {planImagesArr.length>1 && planImagesArr.map((_img,idx)=>(
-              <button key={idx} onClick={()=>setActivePageByPlan(prev=>({...prev,[activePlan]:idx}))}
-                onDoubleClick={()=>renameImage(idx)}
-                title="Double-cliquez pour renommer"
-                style={{background:activePage===idx?"#1d4ed8":"#243352",color:activePage===idx?"#fff":"#94a3b8",border:"1px solid "+(activePage===idx?"#3b82f6":"#3d5270"),borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                {(_img&&_img.name)?_img.name:("Plan "+(idx+1))}
-              </button>
+              <div key={idx} style={{display:"flex",alignItems:"center",gap:1,background:activePage===idx?"#1d4ed8":"#243352",border:"1px solid "+(activePage===idx?"#3b82f6":"#3d5270"),borderRadius:7,padding:"1px 3px"}}>
+                <button onClick={()=>setActivePageByPlan(prev=>({...prev,[activePlan]:idx}))}
+                  onDoubleClick={()=>renameImage(idx)}
+                  title="Cliquez pour afficher, double-cliquez pour renommer"
+                  style={{background:"transparent",color:activePage===idx?"#fff":"#94a3b8",border:"none",padding:"3px 8px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  {(_img&&_img.name)?_img.name:("Plan "+(idx+1))}
+                </button>
+                {activePage===idx && (
+                  <>
+                    <button onClick={()=>moveImage(idx,-1)} title="Deplacer a gauche" disabled={idx===0}
+                      style={{background:"transparent",color:idx===0?"#4b5b74":"#dbeafe",border:"none",padding:"0 2px",fontSize:11,cursor:idx===0?"default":"pointer",fontFamily:"inherit"}}>◀</button>
+                    <button onClick={()=>moveImage(idx,1)} title="Deplacer a droite" disabled={idx===planImagesArr.length-1}
+                      style={{background:"transparent",color:idx===planImagesArr.length-1?"#4b5b74":"#dbeafe",border:"none",padding:"0 2px",fontSize:11,cursor:idx===planImagesArr.length-1?"default":"pointer",fontFamily:"inherit"}}>▶</button>
+                    <button onClick={()=>deleteImageFromPlan(idx)} title="Supprimer ce plan"
+                      style={{background:"transparent",color:"#fecaca",border:"none",padding:"0 3px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+                  </>
+                )}
+              </div>
             ))}
             <label style={{background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Ajouter une image
