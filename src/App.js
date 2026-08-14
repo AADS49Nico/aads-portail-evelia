@@ -11857,6 +11857,8 @@ function PlanImplantation({ seuilsGlobaux }) {
     try { const s = localStorage.getItem("aads_plan_colors"); return s ? JSON.parse(s) : {}; } catch(e) { return {}; }
   });
   const [editingPlanColor, setEditingPlanColor] = useState(null);
+  const [dragPlanId, setDragPlanId] = useState(null); // glisser-deposer des onglets plans
+  const [dragImgIdx, setDragImgIdx] = useState(null); // glisser-deposer des etages (images)
   const [showPlanActions, setShowPlanActions] = useState(false); // id du plan dont on édite la couleur
   const [nuisibleColors, setNuisibleColors] = useState(()=>{
     try { const s = localStorage.getItem("aads_nuisible_colors"); return s ? {...NUISIBLE_COLORS,...JSON.parse(s)} : {...NUISIBLE_COLORS}; } catch(e) { return {...NUISIBLE_COLORS}; }
@@ -11949,10 +11951,14 @@ function PlanImplantation({ seuilsGlobaux }) {
     sbGet("postes").then(data=>{if(data&&data.length>0)setPostes(data);}).catch(()=>{});
     sbGet("passages").then(data=>{if(data&&data.length>0){setPassages(data);setSelDate(data.sort((a,b)=>{const pd=d=>{const p=(d||"").split("/");return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(0)};return pd(b.date)-pd(a.date);})[0].date);}}).catch(()=>{});
     Promise.all([
-      sbGet("plans").catch(()=>[]),
+      // Chargement RAPIDE : on ne recupere QUE les metadonnees des plans (pas les
+      // images base64, tres lourdes). Les images sont chargees a la demande quand
+      // on ouvre un plan (voir l effet plus bas). Sinon on telechargeait toutes les
+      // images de tous les plans au demarrage -> long.
+      sbFetch("plans?select=id,label,contrat,site,ordre&contrat=eq."+CLIENT_CONFIG.contrat+filtreSite("plans")+"&order=id.asc","GET").catch(()=>[]),
       sbGet("plans_dessines").catch(()=>[]),
     ]).then(([planImgs, planDessines]) => {
-      const imgPlans = (planImgs||[]).map(p=>{ var raw=[]; try { raw = p.images ? (typeof p.images==="string"?JSON.parse(p.images):p.images) : []; } catch(_e) { raw=[]; } if (!Array.isArray(raw)) raw=[]; var imgs = raw.map(function(it){ return (it && typeof it==="object") ? {url:it.url||"", name:it.name||""} : {url:it||"", name:""}; }).filter(function(it){ return it.url; }); var first = p.img_url || p.img || ""; if (imgs.length===0 && first) imgs=[{url:first, name:""}]; return {...p, img:(imgs[0]&&imgs[0].url)||first, images: imgs}; });
+      const imgPlans = (planImgs||[]).map(p=>({ ...p, img:"", images:[], imgLoaded:false }));
       const parseEls = e => typeof e==="string" ? JSON.parse(e||"[]") : (e||[]);
       const dessines = [];
       (planDessines||[]).forEach(d=>{
@@ -11991,6 +11997,25 @@ function PlanImplantation({ seuilsGlobaux }) {
       }
     }).catch(()=>{});
   },[]);
+
+  // Chargement paresseux de l image du plan actif (base64 lourd) : les onglets et
+  // les pastilles s affichent tout de suite, l image arrive quand on ouvre le plan.
+  const loadedImgsRef = useRef(new Set());
+  useEffect(()=>{
+    const id = activePlan;
+    if(!id || String(id).indexOf("dessine_")===0) return;
+    if(loadedImgsRef.current.has(id)) return;
+    loadedImgsRef.current.add(id);
+    sbFetch("plans?select=id,img_url,images&id=eq."+encodeURIComponent(id)+"&contrat=eq."+CLIENT_CONFIG.contrat+filtreSite("plans"),"GET").then(rows=>{
+      const r = rows && rows[0]; if(!r) return;
+      var raw=[]; try { raw = r.images ? (typeof r.images==="string"?JSON.parse(r.images):r.images) : []; } catch(_e) { raw=[]; }
+      if(!Array.isArray(raw)) raw=[];
+      var imgs = raw.map(function(it){ return (it&&typeof it==="object")?{url:it.url||"",name:it.name||""}:{url:it||"",name:""}; }).filter(function(it){ return it.url; });
+      var first = r.img_url||"";
+      if(imgs.length===0 && first) imgs=[{url:first,name:""}];
+      setPlans(prev=>prev.map(function(p){ if(p.id!==id) return p; if(p.annote) return {...p, backgroundImg:p.backgroundImg||first, imgLoaded:true}; return {...p, images:imgs, img:(imgs[0]&&imgs[0].url)||first, imgLoaded:true}; }));
+    }).catch(function(){ loadedImgsRef.current.delete(id); });
+  },[activePlan]);
 
   function getPts(planId){return posByPlan[planId]||[];}
   function setPts(planId,pts){
@@ -12245,7 +12270,11 @@ function PlanImplantation({ seuilsGlobaux }) {
     const initImgs = newPlanImg?[{url:newPlanImg, name:label}]:[];
     setPlans(prev=>[...prev,{id,label,img:newPlanImg,images:initImgs}]);
     setPosByPlan(prev=>({...prev,[id]:[]}));
-    sbUpsert("plans",{id,contrat:CLIENT_CONFIG.contrat,label,img_url:newPlanImg||"",images:JSON.stringify(initImgs)});
+    // Ecriture du plan de base d abord (colonnes toujours presentes), puis la liste
+    // images en best-effort : si la colonne images n existe pas encore (migration non
+    // passee), le plan reste enregistre au lieu d etre rejete en entier.
+    sbUpsert("plans",{id,contrat:CLIENT_CONFIG.contrat,label,img_url:newPlanImg||""});
+    sbUpdate("plans", id, {images: JSON.stringify(initImgs)});
     setNewPlanLabel("");setNewPlanImg(null);setShowAddPlan(false);
     setActivePlanPersisted(id);
   }
@@ -12270,7 +12299,8 @@ function PlanImplantation({ seuilsGlobaux }) {
       var nm = window.prompt("Nom de ce plan (ex: RDC, Etage 1, Sous-sol) :", "Plan "+(imgs.length+1)) || ("Plan "+(imgs.length+1));
       imgs.push({url:dataUrl, name:nm});
       setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:(imgs[0]&&imgs[0].url)||""}:p));
-      sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
+      sbUpdate("plans", activePlan, { img_url:(imgs[0]&&imgs[0].url)||"" });
+      sbUpdate("plans", activePlan, { images: JSON.stringify(imgs) });
       setActivePageByPlan(prev=>({...prev,[activePlan]:imgs.length-1}));
     };
     r.readAsDataURL(file);
@@ -12284,7 +12314,7 @@ function PlanImplantation({ seuilsGlobaux }) {
     if(nm===null) return;
     imgs[idx]={url:imgs[idx].url, name:nm};
     setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs}:p));
-    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
+    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs) });
   }
   function moveImage(idx, dir){
     const plan=plans.find(p=>p.id===activePlan); if(!plan) return;
@@ -12296,7 +12326,8 @@ function PlanImplantation({ seuilsGlobaux }) {
     const newPts = pts.map(function(pt){ var pg=pt.page||0; if(pg===idx) return {...pt,page:j}; if(pg===j) return {...pt,page:idx}; return pt; });
     setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:(imgs[0]&&imgs[0].url)||""}:p));
     setPts(activePlan,newPts);
-    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
+    sbUpdate("plans", activePlan, { img_url:(imgs[0]&&imgs[0].url)||"" });
+    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs) });
     newPts.forEach(function(pt){ if((pt.page||0)===idx||(pt.page||0)===j){ savePostePosition(activePlan, pt.id, pt.x, pt.y, pt.page||0).catch(function(){}); } });
     setActivePageByPlan(prev=>({...prev,[activePlan]:j}));
   }
@@ -12312,7 +12343,8 @@ function PlanImplantation({ seuilsGlobaux }) {
     pts.forEach(function(pt){ var pg=pt.page||0; if(pg===idx){ sbDelete("poste_positions", activePlan+"_"+pt.id); return; } if(pg>idx){ var np={...pt,page:pg-1}; kept.push(np); savePostePosition(activePlan, np.id, np.x, np.y, np.page).catch(function(){}); } else { kept.push(pt); } });
     setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:imgs,img:(imgs[0]&&imgs[0].url)||""}:p));
     setPts(activePlan,kept);
-    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs), img_url:(imgs[0]&&imgs[0].url)||"" });
+    sbUpdate("plans", activePlan, { img_url:(imgs[0]&&imgs[0].url)||"" });
+    sbUpdate("plans", activePlan, { images: JSON.stringify(imgs) });
     setActivePageByPlan(prev=>({...prev,[activePlan]:Math.max(0, Math.min((prev[activePlan]||0), imgs.length-1))}));
   }
   function movePlan(id, dir){
@@ -12328,6 +12360,43 @@ function PlanImplantation({ seuilsGlobaux }) {
       if(isPureDessine){ sbUpdate("plans_dessines", String(p.id).replace("dessine_",""), {ordre:k}); }
       else { sbUpdate("plans", p.id, {ordre:k}); }
     });
+  }
+  // Glisser-deposer : deplace le plan fromId a la place de toId.
+  function reorderPlanTo(fromId, toId){
+    if(!fromId || fromId===toId) return;
+    const arr = plans.slice();
+    const from = arr.findIndex(p=>p.id===fromId);
+    const to = arr.findIndex(p=>p.id===toId);
+    if(from<0||to<0) return;
+    const moved = arr.splice(from,1)[0];
+    arr.splice(to,0,moved);
+    setPlans(arr);
+    arr.forEach(function(p,k){
+      const isPureDessine = p.dessine && !p.annote && String(p.id).indexOf("dessine_")===0;
+      if(isPureDessine){ sbUpdate("plans_dessines", String(p.id).replace("dessine_",""), {ordre:k}); }
+      else { sbUpdate("plans", p.id, {ordre:k}); }
+    });
+  }
+  // Glisser-deposer : deplace l etage fromIdx a la place de toIdx (les pastilles suivent).
+  function reorderImageTo(fromIdx, toIdx){
+    if(fromIdx===null||fromIdx===toIdx) return;
+    const plan=plans.find(p=>p.id===activePlan); if(!plan) return;
+    var imgs = normImgs(plan);
+    const n = imgs.length;
+    if(fromIdx<0||fromIdx>=n||toIdx<0||toIdx>=n) return;
+    const idxOrder=[]; for(var k=0;k<n;k++) idxOrder.push(k);
+    const m = idxOrder.splice(fromIdx,1)[0];
+    idxOrder.splice(toIdx,0,m);
+    const oldToNew={}; idxOrder.forEach(function(oldI,newI){ oldToNew[oldI]=newI; });
+    const newImgs = idxOrder.map(function(oldI){ return imgs[oldI]; });
+    const pts = getPts(activePlan);
+    const newPts = pts.map(function(pt){ var pg=pt.page||0; return {...pt, page:(oldToNew[pg]!==undefined?oldToNew[pg]:pg)}; });
+    setPlans(prev=>prev.map(p=>p.id===activePlan?{...p,images:newImgs,img:(newImgs[0]&&newImgs[0].url)||""}:p));
+    setPts(activePlan,newPts);
+    sbUpdate("plans", activePlan, { img_url:(newImgs[0]&&newImgs[0].url)||"" });
+    sbUpdate("plans", activePlan, { images: JSON.stringify(newImgs) });
+    newPts.forEach(function(pt){ var old = pts.find(function(o){return o.id===pt.id;}); if(old && (old.page||0)!==(pt.page||0)){ savePostePosition(activePlan, pt.id, pt.x, pt.y, pt.page||0).catch(function(){}); } });
+    setActivePageByPlan(prev=>({...prev,[activePlan]:toIdx}));
   }
 
   function deletePlan(id) {
@@ -12718,11 +12787,16 @@ function PlanImplantation({ seuilsGlobaux }) {
                       <button onClick={()=>setEditingPlanId(null)} style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:5,padding:"3px 6px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
                     </div>
                   ) : (
-                    <div onClick={()=>{ if(isActive){ setShowPlanActions(v=>!v); } else { setActivePlanPersisted(pl.id); setShowPlanActions(true); } }}
-                      style={{display:"flex",alignItems:"center",gap:6,padding:"8px 16px",cursor:"pointer",background:isActive?"#243352":"transparent",borderRadius:"8px 8px 0 0",borderTop:isActive?"2px solid #3b82f6":"2px solid transparent",borderLeft:"1px solid "+(isActive?"#3d5270":"transparent"),borderRight:"1px solid "+(isActive?"#3d5270":"transparent"),borderBottom:"none",marginBottom:isActive?-1:0,transition:"all 0.15s"}}>
+                    <div draggable
+                      onDragStart={e=>{ setDragPlanId(pl.id); e.dataTransfer.effectAllowed="move"; try{e.dataTransfer.setData("text/plain",pl.id);}catch(_e){} }}
+                      onDragOver={e=>{ if(dragPlanId&&dragPlanId!==pl.id){ e.preventDefault(); e.dataTransfer.dropEffect="move"; } }}
+                      onDrop={e=>{ e.preventDefault(); if(dragPlanId) reorderPlanTo(dragPlanId, pl.id); setDragPlanId(null); }}
+                      onDragEnd={()=>setDragPlanId(null)}
+                      onClick={()=>{ if(isActive){ setShowPlanActions(v=>!v); } else { setActivePlanPersisted(pl.id); setShowPlanActions(true); } }}
+                      title="Glissez pour reordonner"
+                      style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",cursor:"grab",background:isActive?"#243352":"transparent",borderRadius:"8px 8px 0 0",borderTop:isActive?"2px solid #3b82f6":"2px solid transparent",borderLeft:"1px solid "+(isActive?"#3d5270":(dragPlanId===pl.id?"#3b82f6":"transparent")),borderRight:"1px solid "+(isActive?"#3d5270":"transparent"),borderBottom:"none",marginBottom:isActive?-1:0,opacity:dragPlanId===pl.id?0.4:1,transition:"opacity 0.15s"}}>
+                      <span style={{fontSize:12,color:isActive?"#5a7090":"#41506a",cursor:"grab",lineHeight:1}}>⠿</span>
                       <span style={{fontSize:14,fontWeight:isActive?700:500,color:isActive?"#f1f5f9":"#7a90aa",whiteSpace:"nowrap"}}>{pl.label}</span>
-                      {isActive && <span onClick={e=>{e.stopPropagation();movePlan(pl.id,-1);}} title="Deplacer le plan a gauche" style={{fontSize:11,color:idx===0?"#4b5b74":"#93c5fd",cursor:idx===0?"default":"pointer",padding:"0 1px"}}>◀</span>}
-                      {isActive && <span onClick={e=>{e.stopPropagation();movePlan(pl.id,1);}} title="Deplacer le plan a droite" style={{fontSize:11,color:idx===plans.length-1?"#4b5b74":"#93c5fd",cursor:idx===plans.length-1?"default":"pointer",padding:"0 1px"}}>▶</span>}
                       {isActive && <span style={{fontSize:10,color:"#5a7090"}}>{showPlanActions?"▲":"▼"}</span>}
                     </div>
                   )}
@@ -12740,191 +12814,209 @@ function PlanImplantation({ seuilsGlobaux }) {
           </div>
         </div>
 
-        {/* Barre d'actions — visible seulement si showPlanActions */}
-        {/* Barre zoom — toujours visible */}
-        <div style={{padding:"6px 14px",borderBottom:"1px solid #3d5270",background:"#1a2540",display:"flex",alignItems:"center",gap:6}}>
-          <button onClick={()=>updateZoom(Math.max(40,zoom-10))} style={{background:"#243352",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:5,padding:"3px 10px",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>−</button>
-          <span style={{fontSize:11,color:"#7a90aa",minWidth:38,textAlign:"center"}}>{zoom}%</span>
-          <button onClick={()=>updateZoom(Math.min(150,zoom+10))} style={{background:"#243352",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:5,padding:"3px 10px",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>+</button>
-          <button onClick={()=>updateZoom(80)} style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:5,padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>↺</button>
+        {/* Petite barre : ouvre le panneau lateral des actions */}
+        <div style={{padding:"6px 14px",borderBottom:"1px solid #3d5270",background:"#1a2540",display:"flex",alignItems:"center",gap:8}}>
+          <button onClick={()=>{ if(!activePlan) return; setShowPlanActions(v=>!v); }} disabled={!activePlan}
+            style={{display:"flex",alignItems:"center",gap:6,background:"#243352",color:activePlan?"#cbd5e1":"#4b5b74",border:"1px solid #3d5270",borderRadius:7,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:activePlan?"pointer":"default",fontFamily:"inherit"}}>
+            <span style={{fontSize:13,lineHeight:1}}>⚙</span> Actions & zoom
+          </button>
+          <span style={{fontSize:11,color:"#5a7090"}}>{zoom}%</span>
         </div>
 
-        {activePlan && showPlanActions && (          <div style={{padding:"10px 14px",borderBottom:"1px solid #3d5270",background:"#243352",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+        {activePlan && showPlanActions && (
+          <>
+            {/* Fond cliquable pour fermer */}
+            <div onClick={()=>setShowPlanActions(false)} style={{position:"fixed",inset:0,background:"rgba(6,12,26,0.45)",zIndex:900}}/>
+            {/* Panneau lateral */}
+            <div style={{position:"fixed",top:0,right:0,height:"100vh",width:300,maxWidth:"88vw",background:"#1a2540",borderLeft:"1px solid #3d5270",boxShadow:"-8px 0 24px rgba(0,0,0,0.4)",zIndex:901,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",borderBottom:"1px solid #3d5270"}}>
+                <div style={{fontSize:14,fontWeight:800,color:"#f1f5f9",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{plans.find(p=>p.id===activePlan)?.label||"Plan"}</div>
+                <button onClick={()=>setShowPlanActions(false)} style={{background:"transparent",border:"none",color:"#7a90aa",fontSize:18,cursor:"pointer",fontFamily:"inherit",lineHeight:1,paddingLeft:10}}>✕</button>
+              </div>
+              <div style={{padding:16,overflowY:"auto",display:"flex",flexDirection:"column",gap:8}}>
 
-            {/* Renommer */}
-            <button onClick={()=>{setEditingPlanId(activePlan);setEditingPlanLabel(plans.find(p=>p.id===activePlan)?.label||"");}}
-              style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:6,padding:"4px 9px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
-              Renommer
-            </button>
-
-            {/* + Ajouter des postes */}
-            <div style={{position:"relative"}}>
-              <button onClick={()=>setShowAddPosteMenu(v=>!v)}
-                style={{background:"#1d4ed8",color:"#fff",border:"none",borderRadius:7,padding:"5px 10px",fontSize:11,fontFamily:"inherit",cursor:"pointer",fontWeight:700}}>
-                + Ajouter postes {selectedPostesToAdd.length>0?"("+selectedPostesToAdd.length+")":""}
-              </button>
-              {showAddPosteMenu && (
-                <div style={{position:"absolute",top:"110%",left:0,zIndex:200,background:"#1a2540",border:"1px solid #3d5270",borderRadius:10,padding:12,width:260,maxHeight:320,overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-                  <div style={{fontSize:11,fontWeight:700,color:"#7a90aa",marginBottom:8}}>Sélectionner les postes :</div>
-                  {filteredPostes.filter(p=>!getPts(activePlan).find(pt=>pt.id===p.id)).length===0
-                    ? <div style={{fontSize:11,color:"#5a7090",textAlign:"center",padding:10}}>Tous les postes sont déjà sur ce plan.</div>
-                    : filteredPostes.filter(p=>!getPts(activePlan).find(pt=>pt.id===p.id)).map(p=>(
-                      <label key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",cursor:"pointer",fontSize:11,color:selectedPostesToAdd.includes(p.id)?"#3b82f6":"#cbd5e1"}}>
-                        <input type="checkbox" checked={selectedPostesToAdd.includes(p.id)} onChange={e=>{setSelectedPostesToAdd(prev=>e.target.checked?[...prev,p.id]:prev.filter(x=>x!==p.id));}} style={{accentColor:"#3b82f6"}}/>
-                        <span style={{fontFamily:"monospace",fontWeight:700,color:"#f59e0b"}}>{p.id}</span>
-                        <span style={{color:"#7a90aa",fontSize:10}}>{(p.zone||"").slice(0,25)}</span>
-                      </label>
-                  ))}
-                  <div style={{display:"flex",gap:6,marginTop:10}}>
-                    <button onClick={async ()=>{
-                      if(selectedPostesToAdd.length===0){setShowAddPosteMenu(false);return;}
-                      const newPts = [...getPts(activePlan)];
-                      const failed = [];
-                      // Empiles en colonne serree en haut a gauche : chacun decale vers
-                      // le bas pour rester attrapable. Au-dela de la hauteur du plan on
-                      // repart sur une colonne a droite. A l utilisateur de les distribuer.
-                      const pasY = 3.2, parCol = 28;
-                      for (let i=0; i<selectedPostesToAdd.length; i++) {
-                        const id = selectedPostesToAdd[i];
-                        const colonne = Math.floor(i/parCol), rang = i%parCol;
-                        const x = parseFloat((4 + colonne*5).toFixed(2));
-                        const y = parseFloat((4 + rang*pasY).toFixed(2));
-                        newPts.push({id, x, y, page: activePage});
-                        try { await savePostePosition(activePlan, id, x, y, activePage); }
-                        catch(e) { failed.push({id, message: e.message||String(e)}); }
-                      }
-                      setPrevPosByPlan(posByPlan); setPts(activePlan, newPts);
-                      setSelectedPostesToAdd([]); setShowAddPosteMenu(false);
-                      if (failed.length > 0) alert("Attention : "+failed.length+" poste(s) non enregistres :\n"+failed.map(f=>f.id).join(", "));
-                    }} style={{flex:1,background:"#22c55e",color:"#fff",border:"none",borderRadius:6,padding:"6px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-                      Ajouter {selectedPostesToAdd.length>0?"("+selectedPostesToAdd.length+")":""}
-                    </button>
-                    <button onClick={()=>{setShowAddPosteMenu(false);setSelectedPostesToAdd([]);}}
-                      style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:6,padding:"6px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
-                      Annuler
-                    </button>
-                  </div>
+                {/* Agrandissement */}
+                <div style={{fontSize:10,fontWeight:700,color:"#5a7090",textTransform:"uppercase",letterSpacing:0.5}}>Agrandissement</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button onClick={()=>updateZoom(Math.max(40,zoom-10))} style={{flex:1,background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:6,padding:"7px 0",fontSize:15,cursor:"pointer",fontFamily:"inherit"}}>−</button>
+                  <span style={{fontSize:13,color:"#f1f5f9",minWidth:48,textAlign:"center",fontWeight:700}}>{zoom}%</span>
+                  <button onClick={()=>updateZoom(Math.min(150,zoom+10))} style={{flex:1,background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:6,padding:"7px 0",fontSize:15,cursor:"pointer",fontFamily:"inherit"}}>+</button>
+                  <button onClick={()=>updateZoom(80)} title="Reinitialiser" style={{background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:6,padding:"7px 10px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>↺</button>
                 </div>
-              )}
+
+                <div style={{height:1,background:"#2b3b57",margin:"6px 0"}}/>
+                <div style={{fontSize:10,fontWeight:700,color:"#5a7090",textTransform:"uppercase",letterSpacing:0.5}}>Postes</div>
+
+                {/* Renommer */}
+                <button onClick={()=>{setEditingPlanId(activePlan);setEditingPlanLabel(plans.find(p=>p.id===activePlan)?.label||"");setShowPlanActions(false);}}
+                  style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>✎</span> Renommer le plan
+                </button>
+
+                {/* + Ajouter des postes */}
+                <button onClick={()=>setShowAddPosteMenu(v=>!v)}
+                  style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>＋</span> Ajouter des postes {selectedPostesToAdd.length>0?"("+selectedPostesToAdd.length+")":""}
+                </button>
+                {showAddPosteMenu && (
+                  <div style={{background:"#141d33",border:"1px solid #3d5270",borderRadius:8,padding:10}} onClick={e=>e.stopPropagation()}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#7a90aa",marginBottom:8}}>Sélectionner les postes :</div>
+                    <div style={{maxHeight:240,overflowY:"auto"}}>
+                    {filteredPostes.filter(p=>!getPts(activePlan).find(pt=>pt.id===p.id)).length===0
+                      ? <div style={{fontSize:11,color:"#5a7090",textAlign:"center",padding:10}}>Tous les postes sont déjà sur ce plan.</div>
+                      : filteredPostes.filter(p=>!getPts(activePlan).find(pt=>pt.id===p.id)).map(p=>(
+                        <label key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",cursor:"pointer",fontSize:11,color:selectedPostesToAdd.includes(p.id)?"#3b82f6":"#cbd5e1"}}>
+                          <input type="checkbox" checked={selectedPostesToAdd.includes(p.id)} onChange={e=>{setSelectedPostesToAdd(prev=>e.target.checked?[...prev,p.id]:prev.filter(x=>x!==p.id));}} style={{accentColor:"#3b82f6"}}/>
+                          <span style={{fontFamily:"monospace",fontWeight:700,color:"#f59e0b"}}>{p.id}</span>
+                          <span style={{color:"#7a90aa",fontSize:10}}>{(p.zone||"").slice(0,25)}</span>
+                        </label>
+                    ))}
+                    </div>
+                    <div style={{display:"flex",gap:6,marginTop:10}}>
+                      <button onClick={async ()=>{
+                        if(selectedPostesToAdd.length===0){setShowAddPosteMenu(false);return;}
+                        const newPts = [...getPts(activePlan)];
+                        const failed = [];
+                        const pasY = 3.2, parCol = 28;
+                        for (let i=0; i<selectedPostesToAdd.length; i++) {
+                          const id = selectedPostesToAdd[i];
+                          const colonne = Math.floor(i/parCol), rang = i%parCol;
+                          const x = parseFloat((4 + colonne*5).toFixed(2));
+                          const y = parseFloat((4 + rang*pasY).toFixed(2));
+                          newPts.push({id, x, y, page: activePage});
+                          try { await savePostePosition(activePlan, id, x, y, activePage); }
+                          catch(e) { failed.push({id, message: e.message||String(e)}); }
+                        }
+                        setPrevPosByPlan(posByPlan); setPts(activePlan, newPts);
+                        setSelectedPostesToAdd([]); setShowAddPosteMenu(false);
+                        if (failed.length > 0) alert("Attention : "+failed.length+" poste(s) non enregistres :\n"+failed.map(f=>f.id).join(", "));
+                      }} style={{flex:1,background:"#22c55e",color:"#fff",border:"none",borderRadius:6,padding:"7px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                        Ajouter {selectedPostesToAdd.length>0?"("+selectedPostesToAdd.length+")":""}
+                      </button>
+                      <button onClick={()=>{setShowAddPosteMenu(false);setSelectedPostesToAdd([]);}}
+                        style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:6,padding:"7px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* + Tous les postes */}
+                <button onClick={async ()=>{
+                  const nonPlaces = filteredPostes.filter(p=>!getPts(activePlan).find(pt=>pt.id===p.id));
+                  if(nonPlaces.length===0) return;
+                  const cols = Math.ceil(Math.sqrt(nonPlaces.length));
+                  const newPts = [...getPts(activePlan)];
+                  const failed = [];
+                  for (let i=0; i<nonPlaces.length; i++) {
+                    const p = nonPlaces[i];
+                    const col = i%cols, row = Math.floor(i/cols);
+                    const x = parseFloat((5 + col*(90/cols)).toFixed(2));
+                    const y = parseFloat((5 + row*(90/Math.ceil(nonPlaces.length/cols))).toFixed(2));
+                    newPts.push({id:p.id, x, y, page:activePage});
+                    try { await savePostePosition(activePlan, p.id, x, y, activePage); }
+                    catch(e) { failed.push({id:p.id, message:e.message||String(e)}); }
+                  }
+                  setPrevPosByPlan(posByPlan); setPts(activePlan, newPts);
+                  if (failed.length > 0) alert("Attention : "+failed.length+" poste(s) non enregistres.");
+                }} style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>＋</span> Placer tous les postes
+                </button>
+
+                {/* Supprimer tous les postes */}
+                <button onClick={()=>{
+                  const pts = getPts(activePlan);
+                  if(pts.length===0) return;
+                  if(!window.confirm("Supprimer toutes les pastilles de ce plan ?")) return;
+                  setPrevPosByPlan(posByPlan);
+                  pts.forEach(pt=>sbDelete("poste_positions", activePlan+"_"+pt.id));
+                  setPts(activePlan, []);
+                }} style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>⊘</span> Retirer toutes les pastilles
+                </button>
+
+                <div style={{height:1,background:"#2b3b57",margin:"6px 0"}}/>
+                <div style={{fontSize:10,fontWeight:700,color:"#5a7090",textTransform:"uppercase",letterSpacing:0.5}}>Plan</div>
+
+                {/* Export PDF */}
+                <button onClick={exportPlanPdf}
+                  style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>⭳</span> Export PDF
+                </button>
+
+                {/* Annoter */}
+                <button onClick={()=>{
+                  const activePlanData = plans.find(p=>p.id===activePlan);
+                  if (!activePlanData) return;
+                  const fond = activePlanData.backgroundImg || activePlanData.img || null;
+                  if (String(activePlan).indexOf("dessine_") === 0) {
+                    setEditingDrawnPlan({
+                      id: String(activePlan).replace("dessine_",""),
+                      label: activePlanData.label,
+                      elements: activePlanData.elements || [],
+                      backgroundImg: fond,
+                    });
+                  } else {
+                    setEditingDrawnPlan({
+                      id: activePlan,
+                      label: activePlanData.label,
+                      elements: activePlanData.elements || [],
+                      backgroundImg: fond,
+                      __overwriteImgPlan: activePlan,
+                    });
+                  }
+                  setShowPlanActions(false);
+                  setShowPlanEditor(true);
+                }}
+                  style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>✦</span> Annoter
+                </button>
+
+                {/* Dupliquer */}
+                <button onClick={async ()=>{
+                  const activePlanData = plans.find(p=>p.id===activePlan);
+                  if(!activePlanData) return;
+                  const newId = (activePlanData.dessine?"dessine_":"plan-")+Date.now();
+                  const newLabel = activePlanData.label+" (copie)";
+                  if (activePlanData.dessine) {
+                    const cleanId = newId.replace("dessine_","");
+                    await sbUpsert("plans_dessines", {id:cleanId, contrat:CLIENT_CONFIG.contrat, label:newLabel, elements:JSON.stringify(activePlanData.elements||[]), background_img:activePlanData.backgroundImg||""});
+                    setPlans(prev=>[...prev, {id:newId, label:newLabel, img:null, dessine:true, elements:activePlanData.elements, backgroundImg:activePlanData.backgroundImg}]);
+                  } else {
+                    await sbUpsert("plans", {id:newId, contrat:CLIENT_CONFIG.contrat, label:newLabel, img_url:activePlanData.img||""});
+                    setPlans(prev=>[...prev, {id:newId, label:newLabel, img:activePlanData.img}]);
+                  }
+                  getPts(activePlan).forEach(pt=>{ sbUpsert("poste_positions",{id:newId+"_"+pt.id, poste_id:pt.id, plan_id:newId, x:pt.x, y:pt.y, contrat:CLIENT_CONFIG.contrat}); });
+                  setPts(newId, [...getPts(activePlan)]);
+                  setActivePlanPersisted(newId);
+                  setShowPlanActions(false);
+                }} style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>⧉</span> Dupliquer
+                </button>
+
+                {/* Modifier le dessin (plans dessinés) */}
+                {plans.find(p=>p.id===activePlan)?.dessine && !plans.find(p=>p.id===activePlan)?.annote && (
+                  <button onClick={()=>{
+                    const activePlanData = plans.find(p=>p.id===activePlan);
+                    const original = activePlanData.id.replace("dessine_","");
+                    setEditingDrawnPlan({id:original, label:activePlanData.label, elements:activePlanData.elements, backgroundImg:activePlanData.backgroundImg||null});
+                    setShowPlanActions(false);
+                    setShowPlanEditor(true);
+                  }} style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                    <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>✦</span> Modifier le dessin
+                  </button>
+                )}
+
+                <div style={{height:1,background:"#2b3b57",margin:"6px 0"}}/>
+
+                {/* Supprimer le plan */}
+                <button onClick={()=>deletePlan(activePlan)}
+                  style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#ef444418",color:"#f87171",border:"1px solid #ef444455",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <span style={{width:16,textAlign:"center"}}>✕</span> Supprimer le plan
+                </button>
+              </div>
             </div>
-
-            {/* + Tous les postes */}
-            <button onClick={async ()=>{
-              const nonPlaces = filteredPostes.filter(p=>!getPts(activePlan).find(pt=>pt.id===p.id));
-              if(nonPlaces.length===0) return;
-              const cols = Math.ceil(Math.sqrt(nonPlaces.length));
-              const newPts = [...getPts(activePlan)];
-              const failed = [];
-              for (let i=0; i<nonPlaces.length; i++) {
-                const p = nonPlaces[i];
-                const col = i%cols, row = Math.floor(i/cols);
-                const x = parseFloat((5 + col*(90/cols)).toFixed(2));
-                const y = parseFloat((5 + row*(90/Math.ceil(nonPlaces.length/cols))).toFixed(2));
-                newPts.push({id:p.id, x, y, page:activePage});
-                try { await savePostePosition(activePlan, p.id, x, y, activePage); }
-                catch(e) { failed.push({id:p.id, message:e.message||String(e)}); }
-              }
-              setPrevPosByPlan(posByPlan); setPts(activePlan, newPts);
-              if (failed.length > 0) alert("Attention : "+failed.length+" poste(s) non enregistres.");
-            }} style={{background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              + Tous les postes
-            </button>
-
-            {/* Supprimer tous les postes */}
-            <button onClick={()=>{
-              const pts = getPts(activePlan);
-              if(pts.length===0) return;
-              if(!window.confirm("Supprimer toutes les pastilles de ce plan ?")) return;
-              setPrevPosByPlan(posByPlan);
-              pts.forEach(pt=>sbDelete("poste_positions", activePlan+"_"+pt.id));
-              setPts(activePlan, []);
-            }} style={{background:"#ef444411",color:"#ef4444",border:"1px solid #ef444433",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              Supp. postes
-            </button>
-
-            {/* Export PDF */}
-            <button onClick={exportPlanPdf}
-              style={{background:"#1d4ed822",color:"#3b82f6",border:"1px solid #3b82f644",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              Export PDF
-            </button>
-
-            {/* Effacer */}
-            <button onClick={()=>setPts(activePlan,[])}
-              style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:7,padding:"5px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
-              Effacer
-            </button>
-
-            {/* Annoter */}
-            <button onClick={()=>{
-              const activePlanData = plans.find(p=>p.id===activePlan);
-              if (!activePlanData) return;
-              const fond = activePlanData.backgroundImg || activePlanData.img || null;
-              if (String(activePlan).indexOf("dessine_") === 0) {
-                // Plan dessine autonome : sa ligne plans_dessines porte l id sans le
-                // prefixe. Le renvoyer prefixe creerait une ligne neuve, donc un doublon.
-                setEditingDrawnPlan({
-                  id: String(activePlan).replace("dessine_",""),
-                  label: activePlanData.label,
-                  elements: activePlanData.elements || [],
-                  backgroundImg: fond,
-                });
-              } else {
-                // Annotation en place d un plan image : meme id, les pastilles restent
-                // rattachees, et on rouvre avec les annotations deja posees.
-                setEditingDrawnPlan({
-                  id: activePlan,
-                  label: activePlanData.label,
-                  elements: activePlanData.elements || [],
-                  backgroundImg: fond,
-                  __overwriteImgPlan: activePlan,
-                });
-              }
-              setShowPlanEditor(true);
-            }}
-              style={{background:"transparent",color:"#f59e0b",border:"1px solid #3d5270",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              Annoter
-            </button>
-
-            {/* Dupliquer */}
-            <button onClick={async ()=>{
-              const activePlanData = plans.find(p=>p.id===activePlan);
-              if(!activePlanData) return;
-              const newId = (activePlanData.dessine?"dessine_":"plan-")+Date.now();
-              const newLabel = activePlanData.label+" (copie)";
-              if (activePlanData.dessine) {
-                const cleanId = newId.replace("dessine_","");
-                await sbUpsert("plans_dessines", {id:cleanId, contrat:CLIENT_CONFIG.contrat, label:newLabel, elements:JSON.stringify(activePlanData.elements||[]), background_img:activePlanData.backgroundImg||""});
-                setPlans(prev=>[...prev, {id:newId, label:newLabel, img:null, dessine:true, elements:activePlanData.elements, backgroundImg:activePlanData.backgroundImg}]);
-              } else {
-                await sbUpsert("plans", {id:newId, contrat:CLIENT_CONFIG.contrat, label:newLabel, img_url:activePlanData.img||""});
-                setPlans(prev=>[...prev, {id:newId, label:newLabel, img:activePlanData.img}]);
-              }
-              getPts(activePlan).forEach(pt=>{ sbUpsert("poste_positions",{id:newId+"_"+pt.id, poste_id:pt.id, plan_id:newId, x:pt.x, y:pt.y, contrat:CLIENT_CONFIG.contrat}); });
-              setPts(newId, [...getPts(activePlan)]);
-              setActivePlanPersisted(newId);
-            }} style={{background:"#8b5cf622",color:"#8b5cf6",border:"1px solid #8b5cf644",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              Dupliquer
-            </button>
-
-            {/* Modifier le dessin (plans dessinés) */}
-            {plans.find(p=>p.id===activePlan)?.dessine && !plans.find(p=>p.id===activePlan)?.annote && (
-              <button onClick={()=>{
-                const activePlanData = plans.find(p=>p.id===activePlan);
-                const original = activePlanData.id.replace("dessine_","");
-                setEditingDrawnPlan({id:original, label:activePlanData.label, elements:activePlanData.elements, backgroundImg:activePlanData.backgroundImg||null});
-                setShowPlanEditor(true);
-              }} style={{background:"#8b5cf622",color:"#8b5cf6",border:"1px solid #8b5cf644",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-                Modifier le dessin
-              </button>
-            )}
-
-            {/* Zoom — déplacé sous les onglets */}
-
-            {/* Supprimer le plan */}
-            <button onClick={()=>deletePlan(activePlan)} style={{background:"#ef4444",color:"#fff",border:"none",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              ✕ Supprimer
-            </button>
-          </div>
+          </>
         )}
 
         {showPlanEditor && (
@@ -13038,7 +13130,14 @@ function PlanImplantation({ seuilsGlobaux }) {
         {activePlanData && !activePlanData.dessine && (
           <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
             {planImagesArr.length>1 && planImagesArr.map((_img,idx)=>(
-              <div key={idx} style={{display:"flex",alignItems:"center",gap:1,background:activePage===idx?"#1d4ed8":"#243352",border:"1px solid "+(activePage===idx?"#3b82f6":"#3d5270"),borderRadius:7,padding:"1px 3px"}}>
+              <div key={idx} draggable
+                onDragStart={e=>{ setDragImgIdx(idx); e.dataTransfer.effectAllowed="move"; try{e.dataTransfer.setData("text/plain",String(idx));}catch(_e){} }}
+                onDragOver={e=>{ if(dragImgIdx!==null&&dragImgIdx!==idx){ e.preventDefault(); e.dataTransfer.dropEffect="move"; } }}
+                onDrop={e=>{ e.preventDefault(); if(dragImgIdx!==null) reorderImageTo(dragImgIdx, idx); setDragImgIdx(null); }}
+                onDragEnd={()=>setDragImgIdx(null)}
+                title="Glissez pour reordonner"
+                style={{display:"flex",alignItems:"center",gap:1,background:activePage===idx?"#1d4ed8":"#243352",border:"1px solid "+(dragImgIdx===idx?"#3b82f6":(activePage===idx?"#3b82f6":"#3d5270")),borderRadius:7,padding:"1px 3px",cursor:"grab",opacity:dragImgIdx===idx?0.4:1}}>
+                <span style={{fontSize:11,color:activePage===idx?"#bcd2ff":"#5a7090",cursor:"grab",lineHeight:1,paddingLeft:2}}>⠿</span>
                 <button onClick={()=>setActivePageByPlan(prev=>({...prev,[activePlan]:idx}))}
                   onDoubleClick={()=>renameImage(idx)}
                   title="Cliquez pour afficher, double-cliquez pour renommer"
@@ -13046,14 +13145,8 @@ function PlanImplantation({ seuilsGlobaux }) {
                   {(_img&&_img.name)?_img.name:("Plan "+(idx+1))}
                 </button>
                 {activePage===idx && (
-                  <>
-                    <button onClick={()=>moveImage(idx,-1)} title="Deplacer a gauche" disabled={idx===0}
-                      style={{background:"transparent",color:idx===0?"#4b5b74":"#dbeafe",border:"none",padding:"0 2px",fontSize:11,cursor:idx===0?"default":"pointer",fontFamily:"inherit"}}>◀</button>
-                    <button onClick={()=>moveImage(idx,1)} title="Deplacer a droite" disabled={idx===planImagesArr.length-1}
-                      style={{background:"transparent",color:idx===planImagesArr.length-1?"#4b5b74":"#dbeafe",border:"none",padding:"0 2px",fontSize:11,cursor:idx===planImagesArr.length-1?"default":"pointer",fontFamily:"inherit"}}>▶</button>
-                    <button onClick={()=>deleteImageFromPlan(idx)} title="Supprimer ce plan"
-                      style={{background:"transparent",color:"#fecaca",border:"none",padding:"0 3px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
-                  </>
+                  <button onClick={()=>deleteImageFromPlan(idx)} title="Supprimer ce plan"
+                    style={{background:"transparent",color:"#fecaca",border:"none",padding:"0 3px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
                 )}
               </div>
             ))}
