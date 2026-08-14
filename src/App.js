@@ -12792,7 +12792,7 @@ function PlanImplantation({ seuilsGlobaux }) {
                       onDragOver={e=>{ if(dragPlanId&&dragPlanId!==pl.id){ e.preventDefault(); e.dataTransfer.dropEffect="move"; } }}
                       onDrop={e=>{ e.preventDefault(); if(dragPlanId) reorderPlanTo(dragPlanId, pl.id); setDragPlanId(null); }}
                       onDragEnd={()=>setDragPlanId(null)}
-                      onClick={()=>{ if(isActive){ setShowPlanActions(v=>!v); } else { setActivePlanPersisted(pl.id); setShowPlanActions(true); } }}
+                      onClick={()=>{ if(isActive){ setShowPlanActions(v=>!v); } else { setActivePlanPersisted(pl.id); setShowPlanActions(false); } }}
                       title="Glissez pour reordonner"
                       style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",cursor:"grab",background:isActive?"#243352":"transparent",borderRadius:"8px 8px 0 0",borderTop:isActive?"2px solid #3b82f6":"2px solid transparent",borderLeft:"1px solid "+(isActive?"#3d5270":(dragPlanId===pl.id?"#3b82f6":"transparent")),borderRight:"1px solid "+(isActive?"#3d5270":"transparent"),borderBottom:"none",marginBottom:isActive?-1:0,opacity:dragPlanId===pl.id?0.4:1,transition:"opacity 0.15s"}}>
                       <span style={{fontSize:12,color:isActive?"#5a7090":"#41506a",cursor:"grab",lineHeight:1}}>⠿</span>
@@ -12937,6 +12937,14 @@ function PlanImplantation({ seuilsGlobaux }) {
 
                 <div style={{height:1,background:"#2b3b57",margin:"6px 0"}}/>
                 <div style={{fontSize:10,fontWeight:700,color:"#5a7090",textTransform:"uppercase",letterSpacing:0.5}}>Plan</div>
+
+                {/* + Ajouter une image (etage) */}
+                {activePlanData && !activePlanData.dessine && (
+                  <label style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                    <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>＋</span> Ajouter une image (etage)
+                    <input type="file" accept="image/*" style={{display:"none"}} onChange={handleAddImageToPlan}/>
+                  </label>
+                )}
 
                 {/* Export PDF */}
                 <button onClick={exportPlanPdf}
