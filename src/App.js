@@ -7420,13 +7420,13 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
               </div>
               <div>
                 <label style={{fontSize:10,color:"#7a90aa",fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:3}}>Taux activite vigilance (%)</label>
-                <input type="number" min="0" max="100" value={seuils.rongeurs.taux_vigilance||5}
+                <input type="number" min="0" max="100" value={seuils.rongeurs.taux_vigilance ?? 5}
                   onChange={e=>setSeuils(prev=>({...prev,rongeurs:{...prev.rongeurs,taux_vigilance:parseInt(e.target.value)||0}}))}
                   style={{...inpStyle,width:80}}/>
               </div>
               <div>
                 <label style={{fontSize:10,color:"#7a90aa",fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:3}}>Taux activite critique (%)</label>
-                <input type="number" min="0" max="100" value={seuils.rongeurs.taux_critique||10}
+                <input type="number" min="0" max="100" value={seuils.rongeurs.taux_critique ?? 10}
                   onChange={e=>setSeuils(prev=>({...prev,rongeurs:{...prev.rongeurs,taux_critique:parseInt(e.target.value)||0}}))}
                   style={{...inpStyle,width:80}}/>
               </div>
@@ -7458,13 +7458,13 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               <div>
                 <label style={{fontSize:10,color:"#7a90aa",fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:3}}>Orange min (captures)</label>
-                <input type="number" min="0" value={(seuils.rongeursExt||{}).leger||1}
+                <input type="number" min="0" value={(seuils.rongeursExt||{}).leger ?? 1}
                   onChange={e=>setSeuils(prev=>({...prev,rongeursExt:{...(prev.rongeursExt||{}),leger:parseInt(e.target.value)||0}}))}
                   style={{...inpStyle,width:80}}/>
               </div>
               <div>
                 <label style={{fontSize:10,color:"#7a90aa",fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:3}}>Rouge min (captures)</label>
-                <input type="number" min="0" value={(seuils.rongeursExt||{}).moyen||3}
+                <input type="number" min="0" value={(seuils.rongeursExt||{}).moyen ?? 3}
                   onChange={e=>setSeuils(prev=>({...prev,rongeursExt:{...(prev.rongeursExt||{}),moyen:parseInt(e.target.value)||0}}))}
                   style={{...inpStyle,width:80}}/>
               </div>
@@ -7476,13 +7476,13 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               <div>
                 <label style={{fontSize:10,color:"#7a90aa",fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:3}}>Orange min (captures)</label>
-                <input type="number" min="0" value={(seuils.rongeursInt||{}).leger||1}
+                <input type="number" min="0" value={(seuils.rongeursInt||{}).leger ?? 1}
                   onChange={e=>setSeuils(prev=>({...prev,rongeursInt:{...(prev.rongeursInt||{}),leger:parseInt(e.target.value)||0}}))}
                   style={{...inpStyle,width:80}}/>
               </div>
               <div>
                 <label style={{fontSize:10,color:"#7a90aa",fontWeight:600,textTransform:"uppercase",display:"block",marginBottom:3}}>Rouge min (captures)</label>
-                <input type="number" min="0" value={(seuils.rongeursInt||{}).moyen||3}
+                <input type="number" min="0" value={(seuils.rongeursInt||{}).moyen ?? 3}
                   onChange={e=>setSeuils(prev=>({...prev,rongeursInt:{...(prev.rongeursInt||{}),moyen:parseInt(e.target.value)||0}}))}
                   style={{...inpStyle,width:80}}/>
               </div>
@@ -12941,7 +12941,7 @@ function PlanImplantation({ seuilsGlobaux }) {
                 {/* + Ajouter une image (etage) */}
                 {activePlanData && !activePlanData.dessine && (
                   <label style={{display:"flex",alignItems:"center",gap:10,width:"100%",background:"#243352",color:"#cbd5e1",border:"1px solid #3d5270",borderRadius:8,padding:"9px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                    <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>＋</span> Ajouter une image (etage)
+                    <span style={{width:16,textAlign:"center",color:"#7a90aa"}}>＋</span> Ajouter une image
                     <input type="file" accept="image/*" style={{display:"none"}} onChange={handleAddImageToPlan}/>
                   </label>
                 )}
@@ -13158,10 +13158,6 @@ function PlanImplantation({ seuilsGlobaux }) {
                 )}
               </div>
             ))}
-            <label style={{background:"#22c55e22",color:"#22c55e",border:"1px solid #22c55e44",borderRadius:7,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              + Ajouter une image
-              <input type="file" accept="image/*" style={{display:"none"}} onChange={handleAddImageToPlan}/>
-            </label>
             {planImagesArr.length>1 && <span style={{fontSize:10,color:"#5a7090"}}>{planImagesArr.length} plans — chaque poste est posé sur le plan affiché</span>}
           </div>
         )}
