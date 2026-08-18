@@ -758,6 +758,25 @@ export function estConsoPartielle(v) {
 export function estConsoQuelconque(v) {
   return estConsoTotale(v) || estConsoPartielle(v);
 }
+// Couleur d une consommation d appat selon les seuils configures (meme logique
+// que le plan) : vert si aucune conso, orange a partir du seuil orange, rouge a
+// partir du seuil rouge. Renvoie null si la valeur n est pas une consommation.
+export function couleurConsoParSeuil(etat, seuils) {
+  const consoOrange = (seuils && seuils.rongeurs && seuils.rongeurs.conso_orange) || "25%";
+  const consoRouge  = (seuils && seuils.rongeurs && seuils.rongeurs.conso_rouge)  || "75%";
+  function idx(n) {
+    if (estConsoTotale(n)) return 4;
+    if (n === "75%") return 3;
+    if (n === "50%") return 2;
+    if (n === "25%" || n === "CONSOMMATION PARTIELLE") return 1;
+    return 0;
+  }
+  const e = idx(etat);
+  if (e <= 0) return null;
+  if (e >= idx(consoRouge)) return "#ef4444";
+  if (e >= idx(consoOrange)) return "#f59e0b";
+  return "#22c55e";
+}
 // Classification exterieur/interieur d un poste : la colonne type (RE/RI) fait foi ;
 // a defaut seulement (ancien poste sans type), on retombe sur la regex de l identifiant.
 function posteEstExt(p) {
@@ -772,6 +791,20 @@ function posteEstInt(p) {
   if (t === "RE") return false;
   var id = (p && p.id) || "";
   return /^(RI|R\d|S\d)/i.test(id) && !/^RE/i.test(id);
+}
+// Liste (texte) des molecules toxiques utilisees sur un ensemble de postes,
+// d apres les passages (champ molecule des saisies) et molecule_actuelle.
+function moleculesToxiquesTexte(passages, postesRongeurs) {
+  var ids = {}; (postesRongeurs||[]).forEach(function(p){ ids[p.id] = 1; });
+  var set = {};
+  (passages||[]).forEach(function(pa){
+    if (pa.type === "Insectes volants") return;
+    var s = typeof pa.saisies === "string" ? (function(){ try { return JSON.parse(pa.saisies||"{}"); } catch(e){ return {}; } })() : (pa.saisies||{});
+    Object.keys(s).forEach(function(id){ if(!ids[id]) return; var m = s[id] && s[id].molecule; if(m && m!=="Placebo" && m!=="Non toxique") set[m] = 1; });
+  });
+  (postesRongeurs||[]).forEach(function(p){ if(p.molecule_actuelle && p.molecule_actuelle!=="Placebo") set[p.molecule_actuelle] = 1; });
+  var arr = Object.keys(set);
+  return arr.length ? arr.join(", ") : "";
 }
 
 // Couleur d un poste selon son type et ses seuils (meme logique que les pastilles
@@ -1010,7 +1043,7 @@ function Dashboard({ onNav, reinterventions, onLogoClick, onParamsClick, passage
       }).catch(()=>{});
     }
     sbGet("postes").then(data => {
-      if (data && data.length > 0) { setPostesTotal(data.length); setPostesListe(data); }
+      if (data && data.length > 0) { var actifs = data.filter(function(p){ return p.statut !== "Désactivé"; }); setPostesTotal(actifs.length); setPostesListe(actifs); }
     }).catch(()=>{});
     sbGet("maintenance_deiv_interventions").then(data => {
       if (data && data.length > 0) setNbMaintenancesDeiv(data.length);
@@ -1942,9 +1975,22 @@ function Cartographie({ seuilsGlobaux }) {
       const s = seuilsDyn[nuisible];
       return s ? (num >= s.critique ? "#ef4444" : num >= s.vigilance ? "#f59e0b" : "#22c55e") : "#22c55e";
     }
-    if (estConsoTotale(v)) return "#ef4444";
-    if (v === "CONSOMMATION PARTIELLE") return "#f59e0b";
-    if (v === "75%" || v === "50%" || v === "25%") return "#f59e0b";
+    // Consommation rongeurs : on colore selon le POURCENTAGE REEL (p.infos),
+    // car p.passages[d] a perdu le % ("CONSOMMATION PARTIELLE"). La couleur
+    // suit alors les seuils, exactement comme le plan.
+    const info = (p.infos||{})[d];
+    if (info && info.type) {
+      const etatReel = info.type==="totale" ? "100%"
+                     : info.type==="partielle" ? (info.valeur || "CONSOMMATION PARTIELLE")
+                     : "";
+      const cc = couleurConsoParSeuil(etatReel, seuilsGlobaux);
+      if (cc) return cc;
+      if (info.type === "cap") return "#f59e0b";
+      if (info.type === "num" && parseFloat(info.valeur) > 0) return "#f59e0b";
+      return "#22c55e";
+    }
+    const cc2 = couleurConsoParSeuil(v, seuilsGlobaux);
+    if (cc2) return cc2;
     if (v && !isNaN(parseFloat(v)) && parseFloat(v) > 0) return "#f59e0b";
     return "#22c55e";
   }
@@ -2942,7 +2988,9 @@ function Conformite() {
     const dateFmt = draft.date && draft.date.includes("-") ? draft.date.split("-").reverse().join("/") : draft.date;
     const updated = {...draft, date: dateFmt};
     setCriteres(prev => prev.map(c => c.ref === editing ? updated : c));
-    sbUpdate("conformite_ifs", editing, { libelle:updated.libelle, statut:updated.statut, date:updated.date||"" });
+    // Upsert (cree ou met a jour) : plus robuste qu un PATCH si la ligne n existe
+    // pas encore pour ce site.
+    sbUpsert("conformite_ifs", { id: editing, contrat: CLIENT_CONFIG.contrat, ref: updated.ref||editing, libelle:updated.libelle, statut:updated.statut, date:updated.date||"" });
     setEditing(null);
   }
   function deleteCritere(ref) {
@@ -3743,6 +3791,7 @@ function StatutGraph({ passagesFiltres }) {
 
 function TauxActiviteChart({ passages, postes }) {
   const [typeFilter, setTypeFilter] = usePersistedValue("TauxActivite_typeFilter", "tous"); // tous | RE | RI
+  const [macroFilter, setMacroFilter] = usePersistedValue("TauxActivite_macroFilter", "Toutes"); // zone macro, cumulable avec le type
   const [filterAnnee, setFilterAnnee] = usePersistedValue("TauxActivite_filterAnnee", anneeDefaut(passages));
   const [selectedAnnees, setSelectedAnnees] = usePersistedValue("TauxActivite_selectedAnnees", []);
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("TauxActivite_filterTrimestre", "Tous");
@@ -3769,7 +3818,8 @@ function TauxActiviteChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter));
+  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter));
+  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
 
@@ -3879,13 +3929,15 @@ function TauxActiviteChart({ passages, postes }) {
     const svgTaux = "<svg width='"+W2+"' height='"+H2+"' xmlns='http://www.w3.org/2000/svg' style='background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb'>"+seuilsSvg+moisSvg+seriesSvg+legendeSvg+"</svg>";
 
     const typeLabel = typeFilter==="RE"?"Rongeurs exterieurs":typeFilter==="RI"?"Rongeurs interieurs":"Tous rongeurs";
+    const macroLabel = (macroFilter && macroFilter!=="Toutes") ? " - Zone macro : "+macroFilter : "";
+    const molTox = moleculesToxiquesTexte(passages, postesRongeurs);
     const rows = statsParAnnee.map(function(sa){
       return sa.stats.map(function(x){ return "<tr><td>"+MOIS_LABELS[x.mois]+" "+sa.annee+"</td><td style='font-weight:700'>"+x.tauxActivite+"%</td><td>"+x.actifs+"/"+x.total+"</td></tr>"; }).join("");
     }).join("");
 
     exportHTML("Taux activite rongeurs - "+CLIENT_CONFIG.nom,
-      "<h1>Taux d'activité - "+typeLabel+"</h1>"+
-      "<p style='color:#6b7280;margin-bottom:16px'>"+CLIENT_CONFIG.nom+" - "+new Date().toLocaleDateString("fr-FR")+"</p>"+
+      "<h1>Taux d'activité - "+typeLabel+macroLabel+"</h1>"+
+      "<p style='color:#6b7280;margin-bottom:16px'>"+CLIENT_CONFIG.nom+" - "+new Date().toLocaleDateString("fr-FR")+(molTox?" &middot; Molécules toxiques : "+molTox:"")+"</p>"+
       svgTaux+
       "<table style='width:100%;border-collapse:collapse;margin-top:16px'><thead><tr><th>Mois</th><th>Taux</th><th>Postes actifs</th></tr></thead><tbody>"+rows+"</tbody></table>"
     );
@@ -3917,6 +3969,12 @@ function TauxActiviteChart({ passages, postes }) {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
+                <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
+                  {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
+                </select>
               </div>
               <div>
                 <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Annee(s)</label>
@@ -3958,7 +4016,7 @@ function TauxActiviteChart({ passages, postes }) {
                 style={{background:showSeuils?"#243352":"transparent",color:showSeuils?"#f1f5f9":"#7a90aa",border:"1px solid "+(showSeuils?"#5a7090":"#3d5270"),borderRadius:7,padding:"6px 12px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                 {showSeuils?"Masquer":"Afficher"} seuils
               </button>
-              <button onClick={()=>{setTypeFilter("tous");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setShowSeuils(true);setEchelle("auto");}}
+              <button onClick={()=>{setTypeFilter("tous");setMacroFilter("Toutes");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setShowSeuils(true);setEchelle("auto");}}
                 style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:7,padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
                 Reset
               </button>
@@ -4035,6 +4093,12 @@ function TauxActiviteChart({ passages, postes }) {
           </div>
         </div>
         <div>
+          <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
+          <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
+            {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div>
           <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Annee(s)</label>
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
             {annees.map(a=>{
@@ -4074,7 +4138,7 @@ function TauxActiviteChart({ passages, postes }) {
           style={{background:showSeuils?"#243352":"transparent",color:showSeuils?"#f1f5f9":"#7a90aa",border:"1px solid "+(showSeuils?"#5a7090":"#3d5270"),borderRadius:7,padding:"6px 12px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
           {showSeuils?"Masquer":"Afficher"} seuils
         </button>
-        <button onClick={()=>{setTypeFilter("tous");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setShowSeuils(true);setEchelle("auto");}}
+        <button onClick={()=>{setTypeFilter("tous");setMacroFilter("Toutes");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setShowSeuils(true);setEchelle("auto");}}
           style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:7,padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
           Reset
         </button>
@@ -4130,6 +4194,7 @@ function TauxActiviteChart({ passages, postes }) {
 
 function CapturesChart({ passages, postes }) {
   const [typeFilter, setTypeFilter] = usePersistedValue("Captures_typeFilter", "tous"); // tous | RE | RI
+  const [macroFilter, setMacroFilter] = usePersistedValue("Captures_macroFilter", "Toutes"); // zone macro, cumulable avec le type
   const [filterAnnee, setFilterAnnee] = usePersistedValue("Captures_filterAnnee", anneeDefaut(passages));
   const [selectedAnnees, setSelectedAnnees] = usePersistedValue("Captures_selectedAnnees", []);
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("Captures_filterTrimestre", "Tous");
@@ -4142,7 +4207,8 @@ function CapturesChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter));
+  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter));
+  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
 
@@ -4232,11 +4298,13 @@ function CapturesChart({ passages, postes }) {
     const svgCap = "<svg width='"+W2+"' height='"+H2+"' xmlns='http://www.w3.org/2000/svg' style='background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb'>"+barsSvg+"</svg>";
 
     const typeLabel = typeFilter==="RE"?"Rongeurs exterieurs":typeFilter==="RI"?"Rongeurs interieurs":"Tous rongeurs";
+    const macroLabel = (macroFilter && macroFilter!=="Toutes") ? " - Zone macro : "+macroFilter : "";
+    const molTox = moleculesToxiquesTexte(passages, postesRongeurs);
     const rows = stats.map(s=>"<tr><td>"+s.date+"</td><td style='font-weight:700'>"+s.captures+"</td></tr>").join("");
 
     exportHTML("Captures rongeurs - "+CLIENT_CONFIG.nom,
-      "<h1>Captures rongeurs - "+typeLabel+"</h1>"+
-      "<p style='color:#6b7280;margin-bottom:16px'>"+CLIENT_CONFIG.nom+" - "+new Date().toLocaleDateString("fr-FR")+"</p>"+
+      "<h1>Captures rongeurs - "+typeLabel+macroLabel+"</h1>"+
+      "<p style='color:#6b7280;margin-bottom:16px'>"+CLIENT_CONFIG.nom+" - "+new Date().toLocaleDateString("fr-FR")+(molTox?" &middot; Molécules toxiques : "+molTox:"")+"</p>"+
       svgCap+
       "<table style='width:100%;border-collapse:collapse;margin-top:16px'><thead><tr><th>Date</th><th>Captures</th></tr></thead><tbody>"+rows+"</tbody></table>"
     );
@@ -4254,6 +4322,12 @@ function CapturesChart({ passages, postes }) {
             </button>
           ))}
         </div>
+      </div>
+      <div>
+        <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
+        <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
+          {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
       </div>
       <div>
         <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Annee(s)</label>
@@ -4290,7 +4364,7 @@ function CapturesChart({ passages, postes }) {
           {echelle==="manuel" && <input type="number" min="1" value={maxManuel} onChange={e=>setMaxManuel(e.target.value)} style={{...inpStyle,width:60}}/>}
         </div>
       </div>
-      <button onClick={()=>{setTypeFilter("tous");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setEchelle("auto");}}
+      <button onClick={()=>{setTypeFilter("tous");setMacroFilter("Toutes");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setEchelle("auto");}}
         style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:7,padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
         Reset
       </button>
@@ -4366,6 +4440,7 @@ function CapturesChart({ passages, postes }) {
 
 function PostesTouchesChart({ passages, postes }) {
   const [typeFilter, setTypeFilter] = usePersistedValue("PostesTouches_typeFilter", "tous"); // tous | RE | RI
+  const [macroFilter, setMacroFilter] = usePersistedValue("PostesTouches_macroFilter", "Toutes"); // zone macro, cumulable avec le type
   const [filterAnnee, setFilterAnnee] = usePersistedValue("PostesTouches_filterAnnee", anneeDefaut(passages));
   const [selectedAnnees, setSelectedAnnees] = usePersistedValue("PostesTouches_selectedAnnees", []);
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("PostesTouches_filterTrimestre", "Tous");
@@ -4379,7 +4454,8 @@ function PostesTouchesChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter));
+  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter));
+  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
   const totalPostes = postesRongeurs.length;
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
@@ -4476,11 +4552,13 @@ function PostesTouchesChart({ passages, postes }) {
     const svgChart = "<svg width='"+W2+"' height='"+H2+"' xmlns='http://www.w3.org/2000/svg' style='background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb'>"+totalLineSvg+barsSvg+"</svg>";
 
     const typeLabel = typeFilter==="RE"?"Rongeurs exterieurs":typeFilter==="RI"?"Rongeurs interieurs":"Tous rongeurs";
+    const macroLabel = (macroFilter && macroFilter!=="Toutes") ? " - Zone macro : "+macroFilter : "";
+    const molTox = moleculesToxiquesTexte(passages, postesRongeurs);
     const rows = stats.map(s=>"<tr><td>"+s.date+"</td><td style='font-weight:700'>"+s.touches+" / "+totalPostes+"</td></tr>").join("");
 
     exportHTML("Postes rongeurs touchés - "+CLIENT_CONFIG.nom,
-      "<h1>Postes rongeurs touchés - "+typeLabel+"</h1>"+
-      "<p style='color:#6b7280;margin-bottom:16px'>"+CLIENT_CONFIG.nom+" - "+new Date().toLocaleDateString("fr-FR")+"</p>"+
+      "<h1>Postes rongeurs touchés - "+typeLabel+macroLabel+"</h1>"+
+      "<p style='color:#6b7280;margin-bottom:16px'>"+CLIENT_CONFIG.nom+" - "+new Date().toLocaleDateString("fr-FR")+(molTox?" &middot; Molécules toxiques : "+molTox:"")+"</p>"+
       svgChart+
       "<table style='width:100%;border-collapse:collapse;margin-top:16px'><thead><tr><th>Date</th><th>Postes rongeurs touchés</th></tr></thead><tbody>"+rows+"</tbody></table>"
     );
@@ -4498,6 +4576,12 @@ function PostesTouchesChart({ passages, postes }) {
             </button>
           ))}
         </div>
+      </div>
+      <div>
+        <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
+        <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
+          {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
       </div>
       <div>
         <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Annee(s)</label>
@@ -4539,7 +4623,7 @@ function PostesTouchesChart({ passages, postes }) {
         style={{background:showTotal?"#243352":"transparent",color:showTotal?"#f1f5f9":"#7a90aa",border:"1px solid "+(showTotal?"#5a7090":"#3d5270"),borderRadius:7,padding:"6px 12px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
         {showTotal?"Masquer":"Afficher"} ligne totale
       </button>
-      <button onClick={()=>{setTypeFilter("tous");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setShowTotal(true);setEchelle("auto");}}
+      <button onClick={()=>{setTypeFilter("tous");setMacroFilter("Toutes");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setShowTotal(true);setEchelle("auto");}}
         style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:7,padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
         Reset
       </button>
@@ -5861,6 +5945,8 @@ function Statistiques() {
   const MACROS_ALL    = ["Toutes",...MACROS];
   const MOIS_LABELS   = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
   const CATS_IV = ["Moucherons","Mouches","Moustiques","Hyménoptères","Lépidoptères","Coléoptères","Punaises","Tipules"];
+  // Postes actifs : on exclut les postes desactives de toutes les stats/graphes.
+  const postesActifs = postes.filter(p => p.statut !== "Désactivé");
 
   useEffect(() => {
     sbGet("passages").then(data => { if (data && data.length > 0) setPassages(data); }).catch(()=>{});
@@ -5993,34 +6079,34 @@ function Statistiques() {
         <div id="tendances-export-zone">
           {/* Taux d activite - composant autonome avec ses propres filtres */}
           <div className="export-card-block">
-            <TauxActiviteChart passages={passages} postes={postes} />
+            <TauxActiviteChart passages={passages} postes={postesActifs} />
           </div>
 
           {/* Postes touchés - composant autonome avec ses propres filtres */}
           <div className="export-card-block">
-            <PostesTouchesChart passages={passages} postes={postes} />
+            <PostesTouchesChart passages={passages} postes={postesActifs} />
           </div>
 
           {/* Captures - composant autonome avec ses propres filtres */}
           <div className="export-card-block">
-            <CapturesChart passages={passages} postes={postes} />
+            <CapturesChart passages={passages} postes={postesActifs} />
           </div>
           <div className="export-card-block">
-            <ToxiquePlaceboChart passages={passages} postes={postes} />
+            <ToxiquePlaceboChart passages={passages} postes={postesActifs} />
           </div>
           <div className="export-card-block">
-            <MoleculesChart passages={passages} postes={postes} />
+            <MoleculesChart passages={passages} postes={postesActifs} />
           </div>
 
           {/* Graphes avances */}
           <div className="export-card-block"><DeivEvolutionStandaloneChart passages={passages} /></div>
-          <div className="export-card-block"><TeignesEvolutionChart passages={passages} postes={postes} /></div>
-          <div className="export-card-block"><DeivParAppareilChart passages={passages} postes={postes} /></div>
+          <div className="export-card-block"><TeignesEvolutionChart passages={passages} postes={postesActifs} /></div>
+          <div className="export-card-block"><DeivParAppareilChart passages={passages} postes={postesActifs} /></div>
           <div className="export-card-block"><ReinterPassagesChart passages={passages} reinterventions={reinterventions} /></div>
-          <div className="export-card-block"><Top10PostesChart passages={passages} postes={postes} /></div>
+          <div className="export-card-block"><Top10PostesChart passages={passages} postes={postesActifs} /></div>
           <div className="export-card-block"><PassagesParAnneeChart passages={passages} reinterventions={reinterventions} /></div>
           <div className="export-card-block"><PlanActionsPieChart actions={actions} /></div>
-          <div className="export-card-block"><PostesNuisiblePieChart postes={postes} /></div>
+          <div className="export-card-block"><PostesNuisiblePieChart postes={postesActifs} /></div>
         </div>
       )}
     </div>
@@ -6499,6 +6585,7 @@ function PlanActions() {
   const [filter, setFilter] = useState("Toutes");
   const [filterAnneeTable, setFilterAnneeTable] = useState("Toutes");
   const [filterMoisTable, setFilterMoisTable] = useState("Tous");
+  const [filterAnneesStats, setFilterAnneesStats] = useState([new Date().getFullYear()]); // annees des graphes 5M/zone (multi-selection ; defaut : annee en cours)
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [lightbox, setLightbox] = useState(null);
@@ -6591,7 +6678,9 @@ function PlanActions() {
       setActions(prev => prev.map(a => {
         if (a.id !== editId) return a;
         const updated = { ...a, ...draft, photos: draftPhotos };
-        sbUpsert("plan_actions", { id:updated.id, contrat:CLIENT_CONFIG.contrat, titre5m:draft.titre5m, type:draft.type, priorite:draft.priorite, zone:draft.zone, description:draft.description, recommandation:draft.recommandation, technicien:draft.technicien, piege_ref:draft.piegeRef||"", statut:updated.statut||"Planifiée", date_detection:updated.dateDetection||"", photos:JSON.stringify(draftPhotos) });
+        // PATCH cible (par id) plutot qu un upsert merge-duplicates : plus robuste,
+        // ne depend pas d une contrainte unique sur la table.
+        sbUpdate("plan_actions", updated.id, { titre5m:draft.titre5m, type:draft.type, priorite:draft.priorite, zone:draft.zone, description:draft.description, recommandation:draft.recommandation, technicien:draft.technicien, piege_ref:draft.piegeRef||"", statut:updated.statut||"Planifiée", date_detection:updated.dateDetection||"", photos:JSON.stringify(draftPhotos) });
         return updated;
       }));
     } else {
@@ -6622,14 +6711,7 @@ function PlanActions() {
     setActions(prev => prev.map(a => {
       if (a.id !== id) return a;
       const updated = { ...a, statut };
-      sbUpsert("plan_actions", {
-        id: updated.id, contrat: CLIENT_CONFIG.contrat,
-        titre5m: updated.titre5m, type: updated.type, priorite: updated.priorite, zone: updated.zone,
-        description: updated.description, recommandation: updated.recommandation, technicien: updated.technicien,
-        piege_ref: updated.piegeRef||"",
-        statut: updated.statut, date_detection: updated.dateDetection||"",
-        photos: JSON.stringify(updated.photos || [])
-      });
+      sbUpdate("plan_actions", updated.id, { statut: updated.statut });
       return updated;
     }));
   }
@@ -6637,6 +6719,10 @@ function PlanActions() {
   const filteredByStatut = filter === "Toutes" ? actions : actions.filter(a => a.statut === filter);
   const pdFilter = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const anneesDispoTable = [...new Set(actions.map(a=>{ const d=pdFilter(a.dateDetection); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>b-a);
+  // Annees proposees pour les graphes 5M/zone : l annee en cours est toujours presente, meme sans donnee.
+  const anneesStatsOpts = [...new Set([new Date().getFullYear(), ...anneesDispoTable])].sort((a,b)=>b-a);
+  const actionsStats = filterAnneesStats.length === 0 ? actions : actions.filter(a=>{ const d=pdFilter(a.dateDetection); return d && !isNaN(d) && filterAnneesStats.includes(d.getFullYear()); });
+  const labelAnneesStats = filterAnneesStats.length === 0 ? "" : " — " + [...filterAnneesStats].sort((a,b)=>a-b).join(", ");
   const MOIS_LABELS_TABLE = ["Janvier","Fevrier","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Decembre"];
   const filtered = filteredByStatut.filter(a => {
     const d = pdFilter(a.dateDetection);
@@ -6972,10 +7058,26 @@ function PlanActions() {
       )}
 
       {/* Graphes statistiques */}
-      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:12,color:"#7a90aa"}}>Année(s) :</span>
+          <button onClick={()=>setFilterAnneesStats([])}
+            style={{ background:filterAnneesStats.length===0?"#1d4ed8":"#243352", color:filterAnneesStats.length===0?"#fff":"#7a90aa", border:"1px solid "+(filterAnneesStats.length===0?"#3b82f6":"#3d5270"), borderRadius:6, padding:"5px 12px", fontSize:11, fontWeight:filterAnneesStats.length===0?700:400, cursor:"pointer", fontFamily:"inherit" }}>
+            Toutes
+          </button>
+          {anneesStatsOpts.map(y=>{
+            const on = filterAnneesStats.includes(y);
+            return (
+              <button key={y} onClick={()=>setFilterAnneesStats(prev=>prev.includes(y)?prev.filter(x=>x!==y):[...prev,y])}
+                style={{ background:on?"#1d4ed8":"#243352", color:on?"#fff":"#7a90aa", border:"1px solid "+(on?"#3b82f6":"#3d5270"), borderRadius:6, padding:"5px 12px", fontSize:11, fontWeight:on?700:400, cursor:"pointer", fontFamily:"inherit" }}>
+                {y}
+              </button>
+            );
+          })}
+        </div>
         <button onClick={()=>{
           const headers = ["5M","Nb actions"];
-          const rows = CINQ_M.map(m=>[m, actions.filter(a=>a.titre5m===m).length]);
+          const rows = CINQ_M.map(m=>[m, actionsStats.filter(a=>a.titre5m===m).length]);
           exportCSV("repartition_5M_"+CLIENT_CONFIG.nom.replace(/\s+/g,"_"), headers, rows);
         }} title="Exporter la répartition 5M en Excel"
           style={{ background:"#22c55e22", color:"#22c55e", border:"1px solid #22c55e44", borderRadius:6, padding:"5px 12px", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
@@ -6983,15 +7085,15 @@ function PlanActions() {
         </button>
       </div>
       <PieChart
-        title="Répartition par 5M"
+        title={"Répartition par 5M"+labelAnneesStats}
         chartKey="PlanActions_5M"
-        data={CINQ_M.map((m,i)=>({label:m, value: actions.filter(a=>a.titre5m===m).length, color:["#8b5cf6","#3b82f6","#22c55e","#f59e0b","#ef4444"][i]}))}
+        data={CINQ_M.map((m,i)=>({label:m, value: actionsStats.filter(a=>a.titre5m===m).length, color:["#8b5cf6","#3b82f6","#22c55e","#f59e0b","#ef4444"][i]}))}
       />
       <BarChartHorizontal
-        title="Répartition par zone"
+        title={"Répartition par zone"+labelAnneesStats}
         chartKey="PlanActions_Zone"
         color="#3b82f6"
-        data={Object.entries(actions.reduce((acc,a)=>{const z=a.zone||"Non renseigne";acc[z]=(acc[z]||0)+1;return acc;},{})).map(([label,value])=>({label,value}))}
+        data={Object.entries(actionsStats.reduce((acc,a)=>{const z=a.zone||"Non renseigne";acc[z]=(acc[z]||0)+1;return acc;},{})).map(([label,value])=>({label,value}))}
       />
       <EvolutionActionsChart actions={actions} />
       <ComparaisonAnneesActionsChart actions={actions} />
@@ -7038,6 +7140,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
   const [reinvPhotos, setReinvPhotos] = useState([]);
   const [activeTab, setActiveTab] = useState("saisie_tab");
   const [filterTypeMol, setFilterTypeMol] = useState("tous");
+  const [filterAnneeMol, setFilterAnneeMol] = useState("Toutes");
   const [deivForm, setDeivForm] = useState({ date:"", technicien:"" });
   const [deivSaisies, setDeivSaisies] = useState({});
   // Mode saisie telephone : poste selectionne + recherche + postes deja valides
@@ -7220,8 +7323,9 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
     const nuisible = p.nuisible||"Rongeurs";
     if (nuisible==="Rongeurs") {
       const total = (parseInt(s.cap_souris||0))+(parseInt(s.cap_ratBrun||0))+(parseInt(s.cap_ratNoir||0));
-      if (total >= seuils.rongeurs.capture_rouge || estConsoTotale(s.etat) || s.etat==="75%") return "#ef4444";
-      if (estConsoPartielle(s.etat)) return "#f59e0b";
+      if (total >= seuils.rongeurs.capture_rouge) return "#ef4444";
+      const cc = couleurConsoParSeuil(s.etat, seuils);
+      if (cc) return cc;
       return "#22c55e";
     }
     if (nuisible==="Blattes") {
@@ -8041,7 +8145,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
           ...postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.molecule_actuelle).filter(Boolean),
           ...passagesData.flatMap(pa=>{ const s=typeof pa.saisies==="string"?JSON.parse(pa.saisies||"{}"):pa.saisies||{}; return Object.values(s).map(x=>x?.molecule).filter(Boolean); })
         ])];
-        const getMolColor = mol => { if(!mol)return "#3d5270"; if(mol==="Placebo")return "#3b82f6"; const others=allMols.filter(m=>m!=="Placebo"); const idx=others.indexOf(mol); return idx>=0?MOL_COLORS[idx%MOL_COLORS.length]:"#7a90aa"; };
+        const getMolColor = mol => { if(!mol)return "#3d5270"; if(mol==="Placebo")return "#3b82f6"; if(/^dif/i.test(mol))return "#f59e0b"; if(/^brod/i.test(mol))return "#ef4444"; const others=allMols.filter(m=>m!=="Placebo"&&!/^dif/i.test(m)&&!/^brod/i.test(m)); const idx=others.indexOf(mol); return idx>=0?MOL_COLORS[idx%MOL_COLORS.length]:"#7a90aa"; };
 
         // Tri naturel des postes : RE1,RE2,...RE10,RE11 puis RI1,...
         function sortNaturel(arr) {
@@ -8054,7 +8158,9 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
 
         const filterType = filterTypeMol;
         const setFilterType = setFilterTypeMol;
-        const passages6 = [...passagesData.filter(pa=>pa.type!=="Insectes volants")].sort((a,b)=>{
+        const anneeDe = d => { const p=(d||"").split("/"); return p.length===3?p[2]:null; };
+        const anneesMol = [...new Set(passagesData.filter(pa=>pa.type!=="Insectes volants").map(pa=>anneeDe(pa.date)).filter(Boolean))].sort((a,b)=>b-a);
+        const passages6 = [...passagesData.filter(pa=>pa.type!=="Insectes volants" && (filterAnneeMol==="Toutes" || anneeDe(pa.date)===filterAnneeMol))].sort((a,b)=>{
           const pd=d=>{const p=(d||"").split("/");return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(0);};
           return pd(a.date)-pd(b.date); // plus ancienne à gauche
         });
@@ -8115,6 +8221,11 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
                   {t==="tous"?"Tous":t==="RE"?"Ext. (RE)":"Int. (RI)"}
                 </button>
               ))}
+              <select value={filterAnneeMol} onChange={e=>setFilterAnneeMol(e.target.value)}
+                style={{background:"#1a2540",color:"#f1f5f9",border:"1px solid #3d5270",borderRadius:7,padding:"5px 10px",fontSize:11,fontFamily:"inherit",cursor:"pointer"}}>
+                <option value="Toutes">Toutes années</option>
+                {anneesMol.map(a=><option key={a} value={a}>{a}</option>)}
+              </select>
               <button onClick={exportPdf} style={{background:"#1d4ed822",color:"#3b82f6",border:"1px solid #3b82f644",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📄 PDF</button>
               <button onClick={exportExcel} style={{background:"#16a34a22",color:"#22c55e",border:"1px solid #22c55e44",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊 Excel</button>
             </div>
@@ -8587,19 +8698,36 @@ function Habilitations() {
   const [form, setForm]               = useState({ nom:"", role:"Technicien", actif:true, certiphyto:false, certibiocide:false, hab_elec:false, caces:false, pack_sec:false, telephone:"", email:"", equipe:"3d" });
   const [uploading, setUploading]     = useState(null);
   const [newDocType, setNewDocType]   = useState("Certiphyto");
-  const [hiddenIds, setHiddenIds]     = useState([]);
+  const [hiddenIds, setHiddenIds]     = useState(()=>{ try { const s = localStorage.getItem("aads_hab_hidden"); const a = s?JSON.parse(s):[]; return Array.isArray(a)?a:[]; } catch(e) { return []; } });
   const [draggingId, setDraggingId]   = useState(null);
   const [showHidden, setShowHidden]   = useState(false);
+  useEffect(()=>{ try { localStorage.setItem("aads_hab_hidden", JSON.stringify(hiddenIds)); } catch(e) {} }, [hiddenIds]);
 
   const DOC_TYPES = activeEquipe === "assainissement" ? DOC_TYPES_ASSAIN : DOC_TYPES_3D;
 
+  // Ordre + masquage des techniciens : persistes EN BASE (config_logos.hab_config)
+  // pour etre partages entre appareils. localStorage reste un cache.
+  const habLoadedRef = React.useRef(false);
+  function saveHabConfig(order, hidden) {
+    var payload = { order: order, hidden: hidden };
+    sbFetch("config_logos?id=eq.main", "PATCH", { hab_config: payload }, { Prefer:"return=representation" })
+      .then(function(r){ if (!r || (Array.isArray(r) && r.length === 0)) { sbFetch("config_logos", "POST", { id:"main", hab_config: payload }, { Prefer:"resolution=merge-duplicates" }).catch(function(){}); } })
+      .catch(function(){});
+  }
+  useEffect(()=>{ if(!habLoadedRef.current) return; saveHabConfig(techniciens.map(t=>t.id), hiddenIds); }, [techniciens, hiddenIds]);
+
   useEffect(() => {
-    sbGet("habilitations").then(data => {
+    Promise.all([
+      sbGet("habilitations").catch(()=>[]),
+      sbFetch("config_logos?id=eq.main","GET").catch(()=>[]),
+    ]).then(([data, cfg]) => {
+      var hc = (cfg && cfg[0] && cfg[0].hab_config) || null;
+      var orderIds = (hc && Array.isArray(hc.order) && hc.order.length) ? hc.order : (function(){ try { return JSON.parse(localStorage.getItem("aads_hab_order")||"null"); } catch(e){ return null; } })();
+      if (hc && Array.isArray(hc.hidden)) { setHiddenIds(hc.hidden); try { localStorage.setItem("aads_hab_hidden", JSON.stringify(hc.hidden)); } catch(e){} }
       if (data && data.length > 0) {
         try {
-          const savedOrder = localStorage.getItem("aads_hab_order");
-          if (savedOrder) {
-            const order = JSON.parse(savedOrder);
+          if (orderIds && Array.isArray(orderIds)) {
+            const order = orderIds;
             const sorted = [...data].sort((a,b) => {
               const ia = order.indexOf(a.id);
               const ib = order.indexOf(b.id);
@@ -8613,7 +8741,8 @@ function Habilitations() {
       } else {
         HABILITATIONS.forEach(h => sbUpsert("habilitations", { id:String(h.id), contrat:CLIENT_CONFIG.contrat, nom:h.nom, role:h.role, actif:h.actif, certiphyto:h.certiphyto, certibiocide:h.certibiocide, hab_elec:h.habElec||false, caces:h.caces, pack_sec:h.packSec||false, telephone:h.telephone||"", email:h.email||"", equipe:"3d" }));
       }
-    }).catch(()=>{});
+      habLoadedRef.current = true;
+    }).catch(()=>{ habLoadedRef.current = true; });
     sbGet("habilitations_docs").then(data => {
       if (data && data.length > 0) {
         const byTech = {};
@@ -8900,17 +9029,34 @@ function Agrements() {
   const [form, setForm]           = useState({ type:"Certification", nom:"", statut:"Valide" });
   const [uploading, setUploading] = useState(null);
   const [sel, setSel]             = useState(null);
-  const [hiddenIds, setHiddenIds] = useState([]);
+  const [hiddenIds, setHiddenIds] = useState(()=>{ try { const s = localStorage.getItem("aads_agrements_hidden"); const a = s?JSON.parse(s):[]; return Array.isArray(a)?a:[]; } catch(e) { return []; } });
   const [draggingId, setDraggingId] = useState(null);
   const [showHidden, setShowHidden] = useState(false);
+  useEffect(()=>{ try { localStorage.setItem("aads_agrements_hidden", JSON.stringify(hiddenIds)); } catch(e) {} }, [hiddenIds]);
+
+  // Ordre + masquage des agrements : persistes EN BASE (config_logos.agr_config)
+  // pour etre partages entre appareils. localStorage reste un cache.
+  const agrLoadedRef = React.useRef(false);
+  function saveAgrConfig(order, hidden) {
+    var payload = { order: order, hidden: hidden };
+    sbFetch("config_logos?id=eq.main", "PATCH", { agr_config: payload }, { Prefer:"return=representation" })
+      .then(function(r){ if (!r || (Array.isArray(r) && r.length === 0)) { sbFetch("config_logos", "POST", { id:"main", agr_config: payload }, { Prefer:"resolution=merge-duplicates" }).catch(function(){}); } })
+      .catch(function(){});
+  }
+  useEffect(()=>{ if(!agrLoadedRef.current) return; saveAgrConfig(agrements.map(a=>a.id), hiddenIds); }, [agrements, hiddenIds]);
 
   useEffect(() => {
-    sbGet("agrements").then(data => {
+    Promise.all([
+      sbGet("agrements").catch(()=>[]),
+      sbFetch("config_logos?id=eq.main","GET").catch(()=>[]),
+    ]).then(([data, cfg]) => {
+      var ac = (cfg && cfg[0] && cfg[0].agr_config) || null;
+      var orderIds = (ac && Array.isArray(ac.order) && ac.order.length) ? ac.order : (function(){ try { return JSON.parse(localStorage.getItem("aads_agr_order")||"null"); } catch(e){ return null; } })();
+      if (ac && Array.isArray(ac.hidden)) { setHiddenIds(ac.hidden); try { localStorage.setItem("aads_agrements_hidden", JSON.stringify(ac.hidden)); } catch(e){} }
       if (data && data.length > 0) {
         try {
-          const savedOrder = localStorage.getItem("aads_agr_order");
-          if (savedOrder) {
-            const order = JSON.parse(savedOrder);
+          if (orderIds && Array.isArray(orderIds)) {
+            const order = orderIds;
             const sorted = [...data].sort((a,b) => {
               const ia = order.indexOf(a.id);
               const ib = order.indexOf(b.id);
@@ -8922,7 +9068,8 @@ function Agrements() {
           }
         } catch(e) { setAgrements(data); }
       } else AGREMENTS.forEach(a => sbUpsert("agrements", { id:String(a.id), contrat:CLIENT_CONFIG.contrat, type:a.type, nom:a.nom, statut:a.statut, url:"" }));
-    }).catch(()=>{});
+      agrLoadedRef.current = true;
+    }).catch(()=>{ agrLoadedRef.current = true; });
     sbGet("agrements_docs").then(data => {
       if (data && data.length > 0) {
         const byId = {};
@@ -10972,7 +11119,7 @@ function Desinsectisation() {
 }
 
 function GestionPostes({ postes, setPostes }) {
-  const STATUTS_POSTES = ["Actif", "Disparu", "Inaccessible", "Abimé"];
+  const STATUTS_POSTES = ["Actif", "Disparu", "Inaccessible", "Abimé", "Désactivé"];
   const NUISIBLES_P  = ["Rongeurs","Blattes","Insectes volants","Teignes","IPS"];
   const [search, setSearch]         = useState("");
   const [filterMacro, setFilterMacro] = useState("Toutes");
@@ -10982,35 +11129,57 @@ function GestionPostes({ postes, setPostes }) {
   const [editId, setEditId]         = useState(null);
   const [editData, setEditData]     = useState({});
   const [prevPostes, setPrevPostes] = useState(null);
-  const [macrosList, setMacrosList] = useState(MACROS);
+  const [macrosList, setMacrosList] = useState(()=>{ try { const s = window.localStorage.getItem("aads_macros_list"); const a = s?JSON.parse(s):null; return (Array.isArray(a)&&a.length)?a:MACROS; } catch(e) { return MACROS; } });
   const [newMacroInput, setNewMacroInput] = useState("");
-  const [typesList, setTypesList] = useState(["RE", "RI", "DEIV", "PIV", "PC", "Autre"]);
+  const [typesList, setTypesList] = useState(()=>{ try { const s = window.localStorage.getItem("aads_types_list"); const a = s?JSON.parse(s):null; return (Array.isArray(a)&&a.length)?a:["RE","RI","DEIV","PIV","PC","Autre"]; } catch(e) { return ["RE","RI","DEIV","PIV","PC","Autre"]; } });
   const [newTypeInput, setNewTypeInput] = useState("");
   const [showManageLists, setShowManageLists] = useState(false);
+  useEffect(()=>{ try { window.localStorage.setItem("aads_macros_list", JSON.stringify(macrosList)); } catch(e) {} }, [macrosList]);
+  useEffect(()=>{ try { window.localStorage.setItem("aads_types_list", JSON.stringify(typesList)); } catch(e) {} }, [typesList]);
+  // Persistance en base (partagee entre appareils/techniciens) des listes macro/types.
+  function saveListesPostes(macros, types) {
+    var payload = { macros: macros, types: types };
+    sbFetch("config_logos?id=eq.main", "PATCH", { listes_postes: payload }, { Prefer:"return=representation" })
+      .then(function(r){ if (!r || (Array.isArray(r) && r.length === 0)) { sbFetch("config_logos", "POST", { id:"main", listes_postes: payload }, { Prefer:"resolution=merge-duplicates" }).catch(function(){}); } })
+      .catch(function(){});
+  }
+  useEffect(function(){
+    sbFetch("config_logos?id=eq.main","GET").then(function(data){
+      if (data && data.length>0 && data[0].listes_postes) {
+        var lp = data[0].listes_postes;
+        if (lp && Array.isArray(lp.macros) && lp.macros.length) { setMacrosList(lp.macros); try { window.localStorage.setItem("aads_macros_list", JSON.stringify(lp.macros)); } catch(e){} }
+        if (lp && Array.isArray(lp.types) && lp.types.length) { setTypesList(lp.types); try { window.localStorage.setItem("aads_types_list", JSON.stringify(lp.types)); } catch(e){} }
+      }
+    }).catch(function(){});
+  }, []);
 
   function addMacro(value, applyTo) {
     const v = value.trim();
     if (!v || macrosList.includes(v)) return;
-    setMacrosList(prev => [...prev.filter(m=>m!=="Autres"), v, "Autres"]);
+    const next = [...macrosList.filter(m=>m!=="Autres"), v, "Autres"];
+    setMacrosList(next); saveListesPostes(next, typesList);
     if (applyTo === "new") setNewP(p=>({...p, macro:v}));
     if (applyTo === "edit") setEditData(d=>({...d, macro:v}));
     setNewMacroInput("");
   }
   function removeMacro(v) {
     if (!window.confirm("Supprimer \""+v+"\" de la liste des macro-zones ?")) return;
-    setMacrosList(prev => prev.filter(m=>m!==v));
+    const next = macrosList.filter(m=>m!==v);
+    setMacrosList(next); saveListesPostes(next, typesList);
   }
   function addType(value, applyTo) {
     const v = value.trim();
     if (!v || typesList.includes(v)) return;
-    setTypesList(prev => [...prev.filter(t=>t!=="Autre"), v, "Autre"]);
+    const next = [...typesList.filter(t=>t!=="Autre"), v, "Autre"];
+    setTypesList(next); saveListesPostes(macrosList, next);
     if (applyTo === "new") setNewP(p=>({...p, type:v}));
     if (applyTo === "edit") setEditData(d=>({...d, type:v}));
     setNewTypeInput("");
   }
   function removeType(v) {
     if (!window.confirm("Supprimer \""+v+"\" de la liste des types ?")) return;
-    setTypesList(prev => prev.filter(t=>t!==v));
+    const next = typesList.filter(t=>t!==v);
+    setTypesList(next); saveListesPostes(macrosList, next);
   }
 
   function addPoste() {
@@ -12166,12 +12335,12 @@ function PlanImplantation({ seuilsGlobaux }) {
       catch(_e) { saisies = {}; }
       Object.keys(saisies).forEach(id=>{ idsSaisis[id] = true; });
     });
-    let postesRelev = postes.filter(p=>idsSaisis[p.id]);
+    let postesRelev = postes.filter(p=>idsSaisis[p.id] && p.statut!=="Désactivé");
     if (postesRelev.length === 0) {
       // Repli : aucune saisie exploitable, on retombe sur le type de passage
       const hasDeiv = passagesDate.some(p=>(p.type||"")==="Insectes volants");
       const hasRongeurs = passagesDate.some(p=>(p.type||"")!=="Insectes volants");
-      postesRelev = postes.filter(p=>{
+      postesRelev = postes.filter(p=>p.statut!=="Désactivé").filter(p=>{
         const isIV = (p.nuisible||"Rongeurs")==="Insectes volants";
         if (hasDeiv && hasRongeurs) return true;
         if (hasDeiv) return isIV;
@@ -12215,8 +12384,11 @@ function PlanImplantation({ seuilsGlobaux }) {
   const activePlanData = plans.find(p=>p.id===activePlan);
   const planImagesArr = (activePlanData && activePlanData.images && activePlanData.images.length) ? activePlanData.images : (activePlanData && activePlanData.img ? [{url:activePlanData.img, name:""}] : []);
   const activePage = Math.min(activePageByPlan[activePlan] || 0, Math.max(0, planImagesArr.length - 1));
+  // Postes desactives : exclus du plan d implantation (pastilles + liste a placer),
+  // mais conserves en base (leur position n est pas supprimee).
+  const postesNonDesactives = postes.filter(p => p.statut !== "Désactivé");
   const planPostes = getPts(activePlan).filter(pt => (pt.page||0) === activePage);
-  const filteredPostes = filterNuisibleArr.length===0 ? postes : postes.filter(p => {
+  const filteredPostes = filterNuisibleArr.length===0 ? postesNonDesactives : postesNonDesactives.filter(p => {
     const nuisible = p.nuisible||"Rongeurs";
     const id = p.id||"";
     return filterNuisibleArr.some(f => {
@@ -12227,7 +12399,7 @@ function PlanImplantation({ seuilsGlobaux }) {
   });
 
   // KPIs for selected date
-  const kpi = selDate ? getPassageStats(selDate) : {tot:0, part:0, ok:postes.length, total:postes.length};
+  const kpi = selDate ? getPassageStats(selDate) : {tot:0, part:0, ok:postesNonDesactives.length, total:postesNonDesactives.length};
 
   async function handlePlanClick(e) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -12691,7 +12863,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
         <div style={{background:"#243352",borderRadius:10,padding:"14px 18px",textAlign:"center"}}>
-          <div style={{fontSize:26,fontWeight:900,color:"#3b82f6"}}>{selDate ? kpi.total : postes.length}</div>
+          <div style={{fontSize:26,fontWeight:900,color:"#3b82f6"}}>{selDate ? kpi.total : postesNonDesactives.length}</div>
           <div style={{fontSize:11,color:"#7a90aa",marginTop:2}}>{selDate ? "Postes contrôlés" : "Postes"}</div>
         </div>
         <div style={{background:"#243352",borderRadius:10,padding:"14px 18px",textAlign:"center"}}>
@@ -12724,11 +12896,11 @@ function PlanImplantation({ seuilsGlobaux }) {
         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           <button onClick={()=>setFilterNuisibleArr([])}
             style={{display:"flex",alignItems:"center",gap:6,background:filterNuisibleArr.length===0?"#fff":"transparent",color:filterNuisibleArr.length===0?"#1a2540":"#7a90aa",border:"1px solid "+(filterNuisibleArr.length===0?"#fff":"#3d5270"),borderRadius:20,padding:"5px 14px",fontSize:12,fontWeight:filterNuisibleArr.length===0?700:500,cursor:"pointer",fontFamily:"inherit"}}>
-            Tous ({postes.length})
+            Tous ({postesNonDesactives.length})
           </button>
           {/* Rongeurs Extérieurs */}
           {(()=>{
-            const count = postes.filter(p=>posteEstExt(p)).length;
+            const count = postesNonDesactives.filter(p=>posteEstExt(p)).length;
             if(count===0 || nuisiblesMasques.indexOf("__RE")>=0) return null;
             const active = filterNuisibleArr.includes("__RE");
             const colRE = nuisibleColors["__RE"]||"#1e40af";
@@ -12742,7 +12914,7 @@ function PlanImplantation({ seuilsGlobaux }) {
           })()}
           {/* Rongeurs Intérieurs */}
           {(()=>{
-            const count = postes.filter(p=>posteEstInt(p)).length;
+            const count = postesNonDesactives.filter(p=>posteEstInt(p)).length;
             if(count===0 || nuisiblesMasques.indexOf("__RI")>=0) return null;
             const active = filterNuisibleArr.includes("__RI");
             const colRI = nuisibleColors["__RI"]||"#60a5fa";
@@ -12758,7 +12930,7 @@ function PlanImplantation({ seuilsGlobaux }) {
             if (nuisiblesMasques.indexOf(n)>=0) return null;
             const col=nuisibleColors[n]||"#7a90aa";
             const active=filterNuisibleArr.includes(n);
-            const count=postes.filter(p=>(p.nuisible||"Rongeurs")===n).length;
+            const count=postesNonDesactives.filter(p=>(p.nuisible||"Rongeurs")===n).length;
             return (
               <button key={n} onClick={()=>setFilterNuisibleArr(prev=>active?prev.filter(x=>x!==n):[...prev,n])}
                 style={{display:"flex",alignItems:"center",gap:6,background:active?"#fff":"transparent",color:active?"#1a2540":"#7a90aa",border:"1px solid "+(active?"#fff":"#3d5270"),borderRadius:20,padding:"5px 14px",fontSize:12,fontWeight:active?700:500,cursor:"pointer",fontFamily:"inherit"}}>
@@ -13190,6 +13362,7 @@ function PlanImplantation({ seuilsGlobaux }) {
             {planPostes.map(pt=>{
               const p=postes.find(p=>p.id===pt.id);
               if(!p)return null;
+              if(p.statut==="Désactivé")return null;   // poste desactive : masque du plan (position conservee en base)
               if(filterNuisibleArr.length>0&&!filterNuisibleArr.some(f=>{if(f==="__RE")return posteEstExt(p);if(f==="__RI")return posteEstInt(p);return (p.nuisible||"Rongeurs")===f;}))return null;
               const col=getPosteColor(p,selDate);
               const isHov=hover===pt.id;
@@ -13292,7 +13465,7 @@ function PlanImplantation({ seuilsGlobaux }) {
             {nuisiblesMasques.indexOf("__RI")<0 && <div style={{display:"flex",alignItems:"center",gap:5}}><PuceForme forme={posteFormes["RI"]||"rond"} col={nuisibleColors["__RI"]||"#60a5fa"}/><span style={{fontSize:11,color:"#7a90aa"}}>Rongeurs int. (RI)</span></div>}
             {NUISIBLES_LIST.filter(n=>n!=="Rongeurs" && nuisiblesMasques.indexOf(n)<0).map(n=>{
               const col=nuisibleColors[n]||"#7a90aa";
-              const count=postes.filter(p=>(p.nuisible||"Rongeurs")===n).length;
+              const count=postesNonDesactives.filter(p=>(p.nuisible||"Rongeurs")===n).length;
               const formeN = posteFormes[n==="Rongeurs"?"RI":n]||"rond";
               return(<div key={n} style={{display:"flex",alignItems:"center",gap:5}}><PuceForme forme={formeN} col={col}/><span style={{fontSize:11,color:"#7a90aa"}}>{n} ({count})</span></div>);
             })}
@@ -14748,6 +14921,24 @@ function AppPortail({ isAdmin, onLogout }) {
   const [showLogoEditor, setShowLogoEditor] = useState(false);
   const [showParametres, setShowParametres] = useState(false);
 
+  // Config des onglets (visibilite + ordre) persistee EN BASE (config_logos.nav_config)
+  // pour etre partagee entre appareils/techniciens. localStorage reste un cache.
+  function saveNavConfig(visible, order) {
+    var payload = { visible: visible, order: order };
+    sbFetch("config_logos?id=eq.main", "PATCH", { nav_config: payload }, { Prefer:"return=representation" })
+      .then(function(r){ if (!r || (Array.isArray(r) && r.length === 0)) { sbFetch("config_logos", "POST", { id:"main", nav_config: payload }, { Prefer:"resolution=merge-duplicates" }).catch(function(){}); } })
+      .catch(function(){});
+  }
+  useEffect(function(){
+    sbFetch("config_logos?id=eq.main","GET").then(function(data){
+      if (data && data.length>0 && data[0].nav_config) {
+        var nc = data[0].nav_config;
+        if (nc && nc.visible && typeof nc.visible==="object") { setNavVisible(function(prev){ return {...prev, ...nc.visible}; }); try { localStorage.setItem("aads_nav_visible", JSON.stringify(nc.visible)); } catch(e){} }
+        if (nc && Array.isArray(nc.order) && nc.order.length) { var miss = allNavItems.filter(function(n){ return nc.order.indexOf(n.id)<0; }).map(function(n){ return n.id; }); var ord=[...nc.order, ...miss]; setNavOrder(ord); try { localStorage.setItem("aads_nav_order", JSON.stringify(ord)); } catch(e){} }
+      }
+    }).catch(function(){});
+  }, []);
+
   const [, forceConfigUpdate] = useState(0);
   // Miroir React de SITE_ACTIF : sert de key a View pour la remonter a chaque
   // bascule, ce qui rejoue le chargement des donnees de la page.
@@ -15020,7 +15211,8 @@ function AppPortail({ isAdmin, onLogout }) {
                           const next = prev.filter(x => x !== dragId);
                           const idx2 = next.indexOf(overId);
                           next.splice(idx2, 0, dragId);
-                          try { localStorage.setItem("aads_nav_order", JSON.stringify(next)); } catch(_e) { return; }
+                          try { localStorage.setItem("aads_nav_order", JSON.stringify(next)); } catch(_e) {}
+                          saveNavConfig(navVisible, next);
                           return next;
                         });
                         navDragOver.current = null;
@@ -15046,7 +15238,8 @@ function AppPortail({ isAdmin, onLogout }) {
                 <button onClick={() => {
                   const reset = allNavItems.map(n => n.id);
                   setNavOrder(reset);
-                  try { localStorage.setItem("aads_nav_order", JSON.stringify(reset)); } catch(_e) { return; }
+                  try { localStorage.setItem("aads_nav_order", JSON.stringify(reset)); } catch(_e) {}
+                  saveNavConfig(navVisible, reset);
                 }} style={{ width:"100%", background:"transparent", color:"#5a7090", border:"1px solid #3d5270", borderRadius:6, padding:"4px 8px", fontSize:10, cursor:"pointer", fontFamily:"inherit", marginBottom:8 }}>
                   Réinitialiser l'ordre
                 </button>
@@ -15061,7 +15254,8 @@ function AppPortail({ isAdmin, onLogout }) {
                           onChange={e => {
                             const next = { ...navVisible, [item.id]: e.target.checked };
                             setNavVisible(next);
-                            try { localStorage.setItem("aads_nav_visible", JSON.stringify(next)); } catch(_e) { return; }
+                            try { localStorage.setItem("aads_nav_visible", JSON.stringify(next)); } catch(_e) {}
+                            saveNavConfig(next, navOrder);
                           }}
                           style={{ accentColor: "#3b82f6" }} />
                         <span style={{ fontSize: 11, color: item.required ? "#5a7090" : navVisible[item.id] !== false ? "#f1f5f9" : "#7a90aa" }}>{item.label}</span>
