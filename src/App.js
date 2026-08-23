@@ -9470,6 +9470,7 @@ function ContratDevis() {
       if (res.ok) {
         const url = SUPABASE_URL + "/storage/v1/object/public/documents/" + path;
         setDocs(prev => prev.map(d => d.id===docId ? {...d, url_doc:url} : d));
+        sbUpdate("contrats_devis", docId, { url_doc:url });   // persistance en base (sinon perdu au rechargement)
       }
     } catch(e) { console.error(e); }
     setUploading(null);
