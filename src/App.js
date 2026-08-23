@@ -319,6 +319,17 @@ async function sbDelete(table, id) {
   return sbFetch(table + "?id=eq." + id + "&contrat=eq." + CLIENT_CONFIG.contrat + filtreSite(table), "DELETE");
 }
 
+// Nettoie un nom de fichier pour le stockage Supabase : enleve les accents et
+// remplace tout caractere non alphanumerique (hors . _ -) par _. Sans ca, un nom
+// avec accent/espace/caractere special (ex: "Habilitation electrique.pdf") fait
+// echouer l upload avec une erreur 400 (cle de stockage invalide).
+function sanitizeFileName(name) {
+  return String(name || "fichier")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")   // enleve les accents
+    .replace(/[^a-zA-Z0-9._-]/g, "_")                    // remplace le reste par _
+    .replace(/_+/g, "_");                                // compacte les _ multiples
+}
+
 // Place ou deplace un poste sur un plan. Un poste ne peut etre que sur un seul plan a la fois
 // (contrainte unique en base sur contrat+poste_id). Si le poste existe deja ailleurs, on le
 // deplace (UPDATE plan_id+x+y) au lieu de tenter un INSERT qui echouerait en doublon.
@@ -810,6 +821,30 @@ function moleculesToxiquesTexte(passages, postesRongeurs) {
 // Couleur d un poste selon son type et ses seuils (meme logique que les pastilles
 // du plan) : "rouge" (seuil critique), "orange" (seuil vigilance) ou "vert".
 // s = saisie du poste, p = poste (pour connaitre le nuisible), seuils = seuils globaux.
+// --- Seuils DEIV par GROUPES nommes ---------------------------------------
+// seuils.deivGroupes = [{ id, nom, deivs:[posteId...], total:{leger,moyen}, cats:{cat:{leger,moyen}} }]
+// Un DEIV d un groupe utilise les seuils du groupe (par categorie + total) ; sinon repli sur seuils.iv.
+function groupeDeivPour(poste, seuils) {
+  const gs = (seuils && seuils.deivGroupes) || [];
+  if (!poste) return null;
+  for (var i=0;i<gs.length;i++){ if (gs[i] && Array.isArray(gs[i].deivs) && gs[i].deivs.indexOf(poste.id)>=0) return gs[i]; }
+  return null;
+}
+function niveauDeiv(s, poste, seuils) {
+  const CATS = ["Moucherons","Mouches","Moustiques","Hyménoptères","Lépidoptères","Coléoptères","Punaises","Tipules"];
+  const g = groupeDeivPour(poste, seuils);
+  const cats = (g && g.cats) || (seuils && seuils.iv) || {};
+  var max = 0, tot = 0;
+  CATS.forEach(function(cat){
+    const v = parseInt((s && s["iv_"+cat])||0); tot += v;
+    const sv = cats[cat] || {leger:999,moyen:9999};
+    if (v>=sv.moyen) max = Math.max(max,2); else if (v>=sv.leger) max = Math.max(max,1);
+  });
+  if (g && g.total && (g.total.leger || g.total.moyen)) {
+    if (tot>=g.total.moyen) max = Math.max(max,2); else if (tot>=g.total.leger) max = Math.max(max,1);
+  }
+  return max;
+}
 export function couleurSeuilPoste(p, s, seuils) {
   if (!p || !s || !seuils) return "vert";
   const CATS_IV = ["Moucherons","Mouches","Moustiques","Hyménoptères","Lépidoptères","Coléoptères","Punaises","Tipules"];
@@ -846,12 +881,7 @@ export function couleurSeuilPoste(p, s, seuils) {
   if (nuisible === "Teignes") { const v=parseInt(s.etat||0); const t=seuils.teignes||{}; return v>=t.moyen?"rouge":v>=t.leger?"orange":"vert"; }
   if (nuisible === "IPS")     { const v=parseInt(s.etat||0); const i=seuils.ips||{};     return v>=i.moyen?"rouge":v>=i.leger?"orange":"vert"; }
   if (nuisible === "Insectes volants") {
-    let max = 0;
-    CATS_IV.forEach(function(cat){
-      const v = parseInt(s["iv_"+cat]||0);
-      const sv = (seuils.iv||{})[cat] || {leger:999,moyen:9999};
-      if (v>=sv.moyen) max = Math.max(max,2); else if (v>=sv.leger) max = Math.max(max,1);
-    });
+    const max = niveauDeiv(s, p, seuils);   // groupe DEIV (par categorie + total) ou repli global
     return max===2?"rouge":max===1?"orange":"vert";
   }
   return "vert";
@@ -2171,7 +2201,9 @@ function Cartographie({ seuilsGlobaux }) {
               const appat = (displaySel.appat || "").toLowerCase();
               const nuisible = (displaySel.nuisible || "Rongeurs");
               const isPlaceboToxique = appat === "placebo" || appat === "toxique";
-              const isGlueRongeur = (appat === "glue") && nuisible === "Rongeurs";
+              // Tout dispositif de capture (glu, mecanique, multicapture, electrique, grille...)
+              // ouvre la saisie en NOMBRE DE CAPTURES. Placebo/Toxique restent en consommation.
+              const isGlueRongeur = nuisible === "Rongeurs" && appat !== "" && !isPlaceboToxique;
               const c = estConsoTotale(val) ? "#ef4444" : estConsoPartielle(val) ? "#f59e0b" : "#22c55e";
               return (
                 <div key={d} style={{ background: "#1a2540", borderRadius: 8, padding: "8px 12px", borderLeft: "3px solid " + c, marginBottom: 6 }} onClick={e => e.stopPropagation()}>
@@ -3792,6 +3824,7 @@ function StatutGraph({ passagesFiltres }) {
 function TauxActiviteChart({ passages, postes }) {
   const [typeFilter, setTypeFilter] = usePersistedValue("TauxActivite_typeFilter", "tous"); // tous | RE | RI
   const [macroFilter, setMacroFilter] = usePersistedValue("TauxActivite_macroFilter", "Toutes"); // zone macro, cumulable avec le type
+  const [produitNuFilter, setProduitNuFilter] = usePersistedValue("TauxActivite_produitNuFilter", "tous"); // tous | oui | non
   const [filterAnnee, setFilterAnnee] = usePersistedValue("TauxActivite_filterAnnee", anneeDefaut(passages));
   const [selectedAnnees, setSelectedAnnees] = usePersistedValue("TauxActivite_selectedAnnees", []);
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("TauxActivite_filterTrimestre", "Tous");
@@ -3818,7 +3851,7 @@ function TauxActiviteChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter));
+  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
   const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
@@ -3972,7 +4005,8 @@ function TauxActiviteChart({ passages, postes }) {
               </div>
               <div>
                 <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
-                <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
+                <select value={produitNuFilter} onChange={e=>setProduitNuFilter(e.target.value)} style={inpStyle}><option value="tous">Produit nu : tous</option><option value="oui">En zone produit nu</option><option value="non">Hors produit nu</option></select>
+        <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
                   {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
@@ -4094,7 +4128,8 @@ function TauxActiviteChart({ passages, postes }) {
         </div>
         <div>
           <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
-          <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
+          <select value={produitNuFilter} onChange={e=>setProduitNuFilter(e.target.value)} style={inpStyle}><option value="tous">Produit nu : tous</option><option value="oui">En zone produit nu</option><option value="non">Hors produit nu</option></select>
+        <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
             {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
           </select>
         </div>
@@ -4195,6 +4230,7 @@ function TauxActiviteChart({ passages, postes }) {
 function CapturesChart({ passages, postes }) {
   const [typeFilter, setTypeFilter] = usePersistedValue("Captures_typeFilter", "tous"); // tous | RE | RI
   const [macroFilter, setMacroFilter] = usePersistedValue("Captures_macroFilter", "Toutes"); // zone macro, cumulable avec le type
+  const [produitNuFilter, setProduitNuFilter] = usePersistedValue("Captures_produitNuFilter", "tous"); // tous | oui | non
   const [filterAnnee, setFilterAnnee] = usePersistedValue("Captures_filterAnnee", anneeDefaut(passages));
   const [selectedAnnees, setSelectedAnnees] = usePersistedValue("Captures_selectedAnnees", []);
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("Captures_filterTrimestre", "Tous");
@@ -4207,7 +4243,7 @@ function CapturesChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter));
+  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
   const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
@@ -4325,6 +4361,7 @@ function CapturesChart({ passages, postes }) {
       </div>
       <div>
         <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
+        <select value={produitNuFilter} onChange={e=>setProduitNuFilter(e.target.value)} style={inpStyle}><option value="tous">Produit nu : tous</option><option value="oui">En zone produit nu</option><option value="non">Hors produit nu</option></select>
         <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
           {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
         </select>
@@ -4441,6 +4478,7 @@ function CapturesChart({ passages, postes }) {
 function PostesTouchesChart({ passages, postes }) {
   const [typeFilter, setTypeFilter] = usePersistedValue("PostesTouches_typeFilter", "tous"); // tous | RE | RI
   const [macroFilter, setMacroFilter] = usePersistedValue("PostesTouches_macroFilter", "Toutes"); // zone macro, cumulable avec le type
+  const [produitNuFilter, setProduitNuFilter] = usePersistedValue("PostesTouches_produitNuFilter", "tous"); // tous | oui | non
   const [filterAnnee, setFilterAnnee] = usePersistedValue("PostesTouches_filterAnnee", anneeDefaut(passages));
   const [selectedAnnees, setSelectedAnnees] = usePersistedValue("PostesTouches_selectedAnnees", []);
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("PostesTouches_filterTrimestre", "Tous");
@@ -4454,7 +4492,7 @@ function PostesTouchesChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter));
+  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
   const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
   const totalPostes = postesRongeurs.length;
 
@@ -4579,6 +4617,7 @@ function PostesTouchesChart({ passages, postes }) {
       </div>
       <div>
         <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Zone macro</label>
+        <select value={produitNuFilter} onChange={e=>setProduitNuFilter(e.target.value)} style={inpStyle}><option value="tous">Produit nu : tous</option><option value="oui">En zone produit nu</option><option value="non">Hors produit nu</option></select>
         <select value={macroFilter} onChange={e=>setMacroFilter(e.target.value)} style={inpStyle}>
           {macrosDispo.map(m=><option key={m} value={m}>{m}</option>)}
         </select>
@@ -4710,7 +4749,8 @@ function PostesTouchesChart({ passages, postes }) {
 }
 
 
-function DeivEvolutionStandaloneChart({ passages }) {
+function DeivEvolutionStandaloneChart({ passages, postes }) {
+  postes = postes || [];
   const CATS = ["Moucherons","Mouches","Moustiques","Hyménoptères","Lépidoptères","Coléoptères","Punaises","Tipules"];
   const CAT_COLORS = {"Moucherons":"#f59e0b","Mouches":"#ef4444","Moustiques":"#3b82f6","Hyménoptères":"#22c55e","Lépidoptères":"#8b5cf6","Coléoptères":"#06b6d4","Punaises":"#f97316","Tipules":"#7a90aa"};
   const DEFAULT_SEUILS = {
@@ -4725,6 +4765,12 @@ function DeivEvolutionStandaloneChart({ passages }) {
   };
 
   const [selectedCats, setSelectedCats] = usePersistedValue("DeivEvolution_selectedCats", []); // [] = Total toutes especes
+  const [produitNuFilter, setProduitNuFilter] = usePersistedValue("DeivEvolution_produitNuFilter", "tous"); // tous | oui | non
+  const [natureFilter, setNatureFilter] = usePersistedValue("DeivEvolution_natureFilter", "toutes"); // toutes | Destructeur | Monitoring
+  const _deivFilterActive = produitNuFilter!=="tous" || natureFilter!=="toutes";
+  const allowedDeivSet = _deivFilterActive ? new Set(postes.filter(p => p.type==="DEIV"
+      && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu))
+      && (natureFilter==="toutes" || (p.nature||"")===natureFilter)).map(p=>p.id)) : null;
   const [filterAnnee, setFilterAnnee] = usePersistedValue("DeivEvolution_filterAnnee", anneeDefaut(passages.filter(p=>p.type==="Insectes volants")));
   const [selectedAnnees, setSelectedAnnees] = usePersistedValue("DeivEvolution_selectedAnnees", []);
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("DeivEvolution_filterTrimestre", "Tous");
@@ -4782,12 +4828,12 @@ function DeivEvolutionStandaloneChart({ passages }) {
     const result = { date: passage.date };
     if (selectedCats.length === 0) {
       let total = 0;
-      Object.values(saisies).forEach(s=>{ CATS.forEach(cat=>{ total += parseInt(s["iv_"+cat]||0); }); });
+      Object.entries(saisies).forEach(([__id,s])=>{ if(allowedDeivSet && !allowedDeivSet.has(__id)) return; CATS.forEach(cat=>{ total += parseInt(s["iv_"+cat]||0); }); });
       result.__TOTAL__ = total;
     } else {
       selectedCats.forEach(cat=>{
         let val = 0;
-        Object.values(saisies).forEach(s=>{ val += parseInt(s["iv_"+cat]||0); });
+        Object.entries(saisies).forEach(([__id,s])=>{ if(allowedDeivSet && !allowedDeivSet.has(__id)) return; val += parseInt(s["iv_"+cat]||0); });
         result[cat] = val;
       });
     }
@@ -4901,6 +4947,18 @@ function DeivEvolutionStandaloneChart({ passages }) {
           })}
           {selectedAnnees.length>0&&<button onClick={()=>setSelectedAnnees([])} style={{background:"transparent",color:"#ef4444",border:"1px solid #ef444433",borderRadius:6,padding:"6px 8px",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>x</button>}
         </div>
+      </div>
+      <div>
+        <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Produit nu</label>
+        <select value={produitNuFilter} onChange={e=>setProduitNuFilter(e.target.value)} style={inpStyle}>
+          <option value="tous">Tous</option><option value="oui">En zone produit nu</option><option value="non">Hors produit nu</option>
+        </select>
+      </div>
+      <div>
+        <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Nature</label>
+        <select value={natureFilter} onChange={e=>setNatureFilter(e.target.value)} style={inpStyle}>
+          <option value="toutes">Toutes</option><option value="Destructeur">Destructeur</option><option value="Monitoring">Monitoring</option>
+        </select>
       </div>
       <div>
         <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Trimestre</label>
@@ -5030,6 +5088,8 @@ function DeivParAppareilChart({ passages, postes }) {
   const [filterTrimestre, setFilterTrimestre] = usePersistedValue("DeivParAppareil_filterTrimestre", "Tous");
   const [filterMois, setFilterMois] = usePersistedValue("DeivParAppareil_filterMois", "Tous");
   const [selectedCats, setSelectedCats] = usePersistedValue("DeivParAppareil_selectedCats", []);
+  const [produitNuFilter, setProduitNuFilter] = usePersistedValue("DeivParAppareil_produitNuFilter", "tous"); // tous | oui | non
+  const [natureFilter, setNatureFilter] = usePersistedValue("DeivParAppareil_natureFilter", "toutes"); // toutes | Destructeur | Monitoring
   const [showSeuils, setShowSeuils] = usePersistedValue("DeivParAppareil_showSeuils", true);
   const [fullscreen, setFullscreen] = useState(false);
   const [collapsed, setCollapsed] = usePersistedCollapsed("DeivParAppareil", false);
@@ -5048,6 +5108,7 @@ function DeivParAppareilChart({ passages, postes }) {
     Tipules:      { leger:10,  moyen:20  },
   };
   const [seuilsIV, setSeuilsIV] = useState(DEFAULT_SEUILS_IV);
+  const [deivGroupes, setDeivGroupes] = useState([]);
 
   useEffect(() => {
     sbGet("seuils").then(data => {
@@ -5055,6 +5116,7 @@ function DeivParAppareilChart({ passages, postes }) {
         try {
           const parsed = typeof data[0].data === "string" ? JSON.parse(data[0].data) : data[0].data;
           if (parsed.iv) setSeuilsIV({...DEFAULT_SEUILS_IV, ...parsed.iv});
+          if (Array.isArray(parsed.deivGroupes)) setDeivGroupes(parsed.deivGroupes);
         } catch(_e) { return; }
       }
     }).catch(()=>{});
@@ -5065,7 +5127,9 @@ function DeivParAppareilChart({ passages, postes }) {
   const CATS = ["Moucherons","Mouches","Moustiques","Hyménoptères","Lépidoptères","Coléoptères","Punaises","Tipules"];
   const CAT_COLORS = {"Moucherons":"#f59e0b","Mouches":"#ef4444","Moustiques":"#3b82f6","Hyménoptères":"#22c55e","Lépidoptères":"#8b5cf6","Coléoptères":"#06b6d4","Punaises":"#f97316","Tipules":"#7a90aa"};
 
-  const deivList = postes.filter(p => p.type === "DEIV").sort((a,b) => {
+  const deivList = postes.filter(p => p.type === "DEIV"
+      && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu))
+      && (natureFilter==="toutes" || (p.nature||"")===natureFilter)).sort((a,b) => {
     const na = parseInt((a.id.match(/\d+/)||["0"])[0]);
     const nb = parseInt((b.id.match(/\d+/)||["0"])[0]);
     return na - nb;
@@ -5107,6 +5171,10 @@ function DeivParAppareilChart({ passages, postes }) {
   });
   const topDeivSorted = [...deivList].sort((a,b)=>(totauxParDeiv[b.id]||0)-(totauxParDeiv[a.id]||0));
   const deivActif = selectedDeiv || (topDeivSorted.length>0 ? topDeivSorted[0].id : "");
+  // Seuils effectifs de l appareil affiche : ceux de son groupe DEIV si present, sinon les globaux.
+  const grpDeiv = (deivGroupes||[]).find(g=>g && Array.isArray(g.deivs) && g.deivs.indexOf(deivActif)>=0) || null;
+  const seuilsEff = (grpDeiv && grpDeiv.cats) ? {...seuilsIV, ...grpDeiv.cats} : seuilsIV;
+  const seuilTotalGrp = (grpDeiv && grpDeiv.total && (grpDeiv.total.leger||grpDeiv.total.moyen)) ? grpDeiv.total : null;
 
   function getStats(passage) {
     const saisies = typeof passage.saisies === "string" ? JSON.parse(passage.saisies||"{}") : (passage.saisies||{});
@@ -5132,12 +5200,15 @@ function DeivParAppareilChart({ passages, postes }) {
   // Seuils traces : soit le type choisi explicitement, soit les especes affichees
   const seuilCats = seuilCat !== "auto" ? [seuilCat] : (selectedCats.length > 0 ? selectedCats : CATS);
   const seuilRef = !showSeuils ? 0
-    : seuilCat !== "auto" ? ((seuilsIV[seuilCat]||{}).moyen || 0)
-    : (selectedCats.length === 1 && seuilsIV[selectedCats[0]]) ? seuilsIV[selectedCats[0]].moyen : 0;
+    : seuilCat !== "auto" ? ((seuilsEff[seuilCat]||{}).moyen || 0)
+    : (selectedCats.length === 1 && seuilsEff[selectedCats[0]]) ? seuilsEff[selectedCats[0]].moyen : 0;
   const maxDonnees = Math.max(...stats.map(s=>s.total), ...statsParAnnee.flatMap(sa=>sa.stats.map(s=>s.total)), seuilRef, 1);
   const maxAuto = Math.max(5, Math.ceil(maxDonnees*1.25/5)*5);
   const maxVal = echelle === "manuel" ? Math.max(1, parseInt(maxManuel)||10) : maxAuto;
   function xPos(i) { return PAD + (stats.length > 1 ? i/(stats.length-1)*(W-PAD*2) : (W-PAD*2)/2); }
+  // Multi-annees : on positionne par MOIS (0-11) et non par index, sinon le dernier
+  // point de chaque annee tombe au meme X (ex: juillet 2026 sur decembre 2025).
+  function xMoisDate(dstr){ const d=pd(dstr); const m=(d&&!isNaN(d))?d.getMonth():0; return PAD + (m/11)*(W-PAD*2); }
   function yVal(v) { return H - PAD - (Math.min(v,maxVal)/maxVal)*(H-PAD*2); }
   const inpStyle = { background:"#243352", border:"1px solid #3d5270", borderRadius:7, padding:"6px 10px", color:"#f1f5f9", fontSize:11, fontFamily:"inherit" };
 
@@ -5153,8 +5224,8 @@ function DeivParAppareilChart({ passages, postes }) {
     if (statsParAnnee.length > 1) {
       chartBody = statsParAnnee.map(function(sa){
         if (sa.stats.length < 1) return "";
-        const pts = sa.stats.map(function(s,i){ const x = sa.stats.length>1?PAD2+i/(sa.stats.length-1)*(W2-PAD2*2):W2/2; return x+","+yVal2(s.total); }).join(" ");
-        const circles = sa.stats.map(function(s,i){ const x=sa.stats.length>1?PAD2+i/(sa.stats.length-1)*(W2-PAD2*2):W2/2; const y=yVal2(s.total); return "<circle cx='"+x+"' cy='"+y+"' r='4' fill='"+sa.color+"'/>"+(s.total>0?"<text x='"+x+"' y='"+(y-9)+"' font-size='8' fill='"+sa.color+"' text-anchor='middle'>"+s.total+"</text>":""); }).join("");
+        const pts = sa.stats.map(function(s,i){ const x = xMoisDate(s.date); return x+","+yVal2(s.total); }).join(" ");
+        const circles = sa.stats.map(function(s,i){ const x=xMoisDate(s.date); const y=yVal2(s.total); return "<circle cx='"+x+"' cy='"+y+"' r='4' fill='"+sa.color+"'/>"+(s.total>0?"<text x='"+x+"' y='"+(y-9)+"' font-size='8' fill='"+sa.color+"' text-anchor='middle'>"+s.total+"</text>":""); }).join("");
         return (sa.stats.length>1?"<polyline points='"+pts+"' fill='none' stroke='"+sa.color+"' stroke-width='2'/>":"")+circles;
       }).join("");
     } else {
@@ -5218,6 +5289,18 @@ function DeivParAppareilChart({ passages, postes }) {
         </div>
       </div>
       <div>
+        <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Produit nu</label>
+        <select value={produitNuFilter} onChange={e=>setProduitNuFilter(e.target.value)} style={inpStyle}>
+          <option value="tous">Tous</option><option value="oui">En zone produit nu</option><option value="non">Hors produit nu</option>
+        </select>
+      </div>
+      <div>
+        <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Nature</label>
+        <select value={natureFilter} onChange={e=>setNatureFilter(e.target.value)} style={inpStyle}>
+          <option value="toutes">Toutes</option><option value="Destructeur">Destructeur</option><option value="Monitoring">Monitoring</option>
+        </select>
+      </div>
+      <div>
         <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Trimestre</label>
         <select value={filterTrimestre} onChange={e=>setFilterTrimestre(e.target.value)} style={inpStyle}>
           <option value="Tous">Tous</option>
@@ -5245,7 +5328,7 @@ function DeivParAppareilChart({ passages, postes }) {
         <label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:3}}>Seuil affiché</label>
         <select value={seuilCat} onChange={e=>setSeuilCat(e.target.value)} style={inpStyle}>
           <option value="auto">Espèces affichées</option>
-          {CATS.filter(c=>seuilsIV[c]).map(c=><option key={c} value={c}>{c}</option>)}
+          {CATS.filter(c=>seuilsEff[c]).map(c=><option key={c} value={c}>{c}</option>)}
         </select>
       </div>
       <button onClick={()=>{setSelectedDeiv("");setFilterAnnee("Toutes");setSelectedAnnees([]);setFilterTrimestre("Tous");setFilterMois("Tous");setSelectedCats([]);setEchelle("auto");setSeuilCat("auto");}}
@@ -5278,9 +5361,9 @@ function DeivParAppareilChart({ passages, postes }) {
         {[0,25,50,75,100].map(pct=>{ const v=Math.round(maxVal*pct/100); const y=yVal(v); return(<g key={pct}><line x1={PAD} x2={W-PAD} y1={y} y2={y} stroke="#2d3f62" strokeWidth="1"/><text x={PAD-4} y={y+4} fontSize="9" fill="#5a7090" textAnchor="end">{v}</text></g>); })}
         {showSeuils && (()=>{
           const catsToShow = seuilCats;
-          return catsToShow.filter(cat=>seuilsIV[cat]).map(cat=>{
-            const sl = seuilsIV[cat].leger;
-            const sm = seuilsIV[cat].moyen;
+          const catLines = catsToShow.filter(cat=>seuilsEff[cat]).map(cat=>{
+            const sl = seuilsEff[cat].leger;
+            const sm = seuilsEff[cat].moyen;
             const col = CAT_COLORS[cat]||"#f59e0b";
             return (<g key={cat}>
               {sl<=maxVal && (<>
@@ -5293,13 +5376,27 @@ function DeivParAppareilChart({ passages, postes }) {
               </>)}
             </g>);
           });
+          // Ligne de seuil TOTAL du groupe (la courbe = total insectes) : violet.
+          const totalLine = seuilTotalGrp ? (
+            <g key="__totalgrp__">
+              {(seuilTotalGrp.leger||0)>0 && seuilTotalGrp.leger<=maxVal && (<>
+                <line x1={PAD} x2={W-PAD} y1={yVal(seuilTotalGrp.leger)} y2={yVal(seuilTotalGrp.leger)} stroke="#c084fc" strokeWidth="1.5" strokeDasharray="6,3"/>
+                <text x={W-PAD+4} y={yVal(seuilTotalGrp.leger)+4} fontSize="8" fill="#c084fc">Total {seuilTotalGrp.leger}</text>
+              </>)}
+              {(seuilTotalGrp.moyen||0)>0 && seuilTotalGrp.moyen<=maxVal && (<>
+                <line x1={PAD} x2={W-PAD} y1={yVal(seuilTotalGrp.moyen)} y2={yVal(seuilTotalGrp.moyen)} stroke="#c084fc" strokeWidth="2" strokeDasharray="4,3"/>
+                <text x={W-PAD+4} y={yVal(seuilTotalGrp.moyen)+4} fontSize="8" fill="#c084fc" fontWeight="700">Total {seuilTotalGrp.moyen}</text>
+              </>)}
+            </g>
+          ) : null;
+          return totalLine ? [totalLine, ...catLines] : catLines;
         })()}
         {statsParAnnee.length > 1 ? statsParAnnee.map((sa,ai)=>{
           if(sa.stats.length < 1) return null;
-          const poly = sa.stats.map((s,i)=>{ const x=sa.stats.length>1?PAD+i/(sa.stats.length-1)*(W-PAD*2):W/2; return x+","+yVal(s.total); }).join(" ");
+          const poly = sa.stats.map((s,i)=>{ const x=xMoisDate(s.date); return x+","+yVal(s.total); }).join(" ");
           return (<g key={sa.annee}>
             {sa.stats.length>1&&<polyline points={poly} fill="none" stroke={sa.color} strokeWidth="2.5" strokeLinejoin="round"/>}
-            {sa.stats.map((s,i)=>{ const x=sa.stats.length>1?PAD+i/(sa.stats.length-1)*(W-PAD*2):W/2; return (<g key={i}><circle cx={x} cy={yVal(s.total)} r="4" fill={sa.color} stroke="#1a2540" strokeWidth="2"/>{s.total>0&&<text x={x} y={yVal(s.total)-9} fontSize="8" fill={sa.color} textAnchor="middle">{s.total}</text>}{ai===0&&<text x={x} y={H-8} fontSize="8" fill="#5a7090" textAnchor="middle" transform={"rotate(-30 "+x+" "+(H-8)+")"}>{(s.date||"").slice(0,5)}</text>}</g>); })}
+            {sa.stats.map((s,i)=>{ const x=xMoisDate(s.date); return (<g key={i}><circle cx={x} cy={yVal(s.total)} r="4" fill={sa.color} stroke="#1a2540" strokeWidth="2"/>{s.total>0&&<text x={x} y={yVal(s.total)-9} fontSize="8" fill={sa.color} textAnchor="middle">{s.total}</text>}{ai===0&&<text x={x} y={H-8} fontSize="8" fill="#5a7090" textAnchor="middle" transform={"rotate(-30 "+x+" "+(H-8)+")"}>{(s.date||"").slice(0,5)}</text>}</g>); })}
           </g>);
         }) : (<g>
           {stats.length>1&&<polyline points={stats.map((s,i)=>xPos(i)+","+yVal(s.total)).join(" ")} fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinejoin="round"/>}
@@ -6099,7 +6196,7 @@ function Statistiques() {
           </div>
 
           {/* Graphes avances */}
-          <div className="export-card-block"><DeivEvolutionStandaloneChart passages={passages} /></div>
+          <div className="export-card-block"><DeivEvolutionStandaloneChart passages={passages} postes={postesActifs} /></div>
           <div className="export-card-block"><TeignesEvolutionChart passages={passages} postes={postesActifs} /></div>
           <div className="export-card-block"><DeivParAppareilChart passages={passages} postes={postesActifs} /></div>
           <div className="export-card-block"><ReinterPassagesChart passages={passages} reinterventions={reinterventions} /></div>
@@ -7337,13 +7434,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
       return v>=seuils.teignes.moyen?"#ef4444":v>=seuils.teignes.leger?"#f59e0b":"#22c55e";
     }
     if (nuisible==="Insectes volants") {
-      let max = 0;
-      CATS_IV.forEach(cat => {
-        const v = parseInt(s["iv_"+cat]||0);
-        const sv = seuils.iv[cat]||{leger:999,moyen:9999};
-        if (v>=sv.moyen) max = Math.max(max,2);
-        else if (v>=sv.leger) max = Math.max(max,1);
-      });
+      const max = niveauDeiv(s, p, seuils);   // groupe DEIV (par categorie + total) ou repli global
       return max===2?"#ef4444":max===1?"#f59e0b":"#22c55e";
     }
     if (nuisible==="IPS") {
@@ -7667,6 +7758,53 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
                 </div>
               ))}
             </div>
+          </Card>
+          <Card style={{marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:14,fontWeight:700,color:"#f1f5f9"}}>Groupes de seuils DEIV</div>
+              <button onClick={()=>setSeuils(prev=>({...prev, deivGroupes:[...(prev.deivGroupes||[]), {id:"grp_"+Date.now(), nom:"Nouveau groupe", deivs:[], total:{leger:0,moyen:0}, cats:{}}]}))}
+                style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Nouveau groupe</button>
+            </div>
+            <div style={{fontSize:10,color:"#7a90aa",marginBottom:10,fontStyle:"italic"}}>Chaque groupe applique ses seuils (par categorie + total) aux DEIV qui lui sont ajoutes. Un DEIV hors groupe garde les seuils globaux ci-dessus.</div>
+            {((seuils.deivGroupes)||[]).length===0 && <div style={{fontSize:11,color:"#5a7090"}}>Aucun groupe. Cliquez « + Nouveau groupe ».</div>}
+            {((seuils.deivGroupes)||[]).map((g,gi)=>{
+              const upd=(patch)=>setSeuils(prev=>({...prev,deivGroupes:(prev.deivGroupes||[]).map((x,i2)=>i2===gi?{...x,...patch}:x)}));
+              const updCat=(cat,key,val)=>setSeuils(prev=>({...prev,deivGroupes:(prev.deivGroupes||[]).map((x,i2)=>i2===gi?{...x,cats:{...(x.cats||{}),[cat]:{...((x.cats||{})[cat]||{}),[key]:parseInt(val)||0}}}:x)}));
+              const deivPostes=postes.filter(pp=>pp.type==="DEIV");
+              return (
+                <div key={g.id||gi} style={{border:"1px solid #3d5270",borderRadius:8,padding:"10px 12px",marginBottom:10}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+                    <input value={g.nom||""} onChange={e=>upd({nom:e.target.value})} placeholder="Nom du groupe" style={{...inpStyle,flex:1,fontWeight:700}}/>
+                    <button onClick={()=>setSeuils(prev=>({...prev,deivGroupes:(prev.deivGroupes||[]).filter((x,i2)=>i2!==gi)}))} style={{background:"#ef444422",color:"#ef4444",border:"1px solid #ef444433",borderRadius:5,padding:"4px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Supprimer</button>
+                  </div>
+                  <div style={{fontSize:9,color:"#7a90aa",marginBottom:4}}>DEIV du groupe ({(g.deivs||[]).length})</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8,maxHeight:110,overflowY:"auto"}}>
+                    {deivPostes.map(dp=>{
+                      const on=(g.deivs||[]).indexOf(dp.id)>=0;
+                      return <button key={dp.id} onClick={()=>upd({deivs: on?(g.deivs||[]).filter(x=>x!==dp.id):[...(g.deivs||[]),dp.id]})}
+                        style={{background:on?"#3b82f622":"transparent",color:on?"#3b82f6":"#7a90aa",border:"1px solid "+(on?"#3b82f6":"#3d5270"),borderRadius:14,padding:"2px 8px",fontSize:10,fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}}>{dp.id}</button>;
+                    })}
+                  </div>
+                  <div style={{display:"flex",gap:10,alignItems:"flex-end",marginBottom:8}}>
+                    <div><div style={{fontSize:9,color:"#c084fc",fontWeight:700,marginBottom:2}}>TOTAL — Orange min</div>
+                      <input type="number" min="0" value={(g.total||{}).leger||0} onChange={e=>upd({total:{...(g.total||{}),leger:parseInt(e.target.value)||0}})} style={{...inpStyle,width:70}}/></div>
+                    <div><div style={{fontSize:9,color:"#c084fc",fontWeight:700,marginBottom:2}}>TOTAL — Rouge min</div>
+                      <input type="number" min="0" value={(g.total||{}).moyen||0} onChange={e=>upd({total:{...(g.total||{}),moyen:parseInt(e.target.value)||0}})} style={{...inpStyle,width:70}}/></div>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:6}}>
+                    {CATS_IV.map(cat=>(
+                      <div key={cat} style={{background:"#1a2540",borderRadius:6,padding:"6px 8px"}}>
+                        <div style={{fontSize:10,color:"#94a3b8",marginBottom:4}}>{cat}</div>
+                        <div style={{display:"flex",gap:6}}>
+                          <input type="number" min="0" title="Orange min" value={((g.cats||{})[cat]||{}).leger||0} onChange={e=>updCat(cat,"leger",e.target.value)} style={{...inpStyle,fontSize:11,padding:"3px 6px",width:52}}/>
+                          <input type="number" min="0" title="Rouge min" value={((g.cats||{})[cat]||{}).moyen||0} onChange={e=>updCat(cat,"moyen",e.target.value)} style={{...inpStyle,fontSize:11,padding:"3px 6px",width:52}}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </Card>
           <Card>
             <div style={{fontSize:14,fontWeight:700,color:"#f1f5f9",marginBottom:14}}>Seuils IPS</div>
@@ -8072,7 +8210,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
                           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:6}}>
                             {CATS_IV.map(cat=>{
                               const v = parseInt(s["iv_"+cat]||0);
-                              const sv = seuils.iv[cat]||{leger:999,moyen:9999};
+                              const sv = (((groupeDeivPour(p,seuils)||{}).cats)||seuils.iv||{})[cat]||{leger:999,moyen:9999};
                               const col = v>=sv.moyen?"#ef4444":v>=sv.leger?"#f59e0b":"#22c55e";
                               return (
                                 <div key={cat} style={{display:"flex",alignItems:"center",gap:6,background:"#1a2540",borderRadius:6,padding:"5px 8px"}}>
@@ -8511,7 +8649,7 @@ function Produits() {
   async function uploadDoc(produitId, file, type) {
     if (!file) return;
     setUploading(produitId+"_"+type);
-    const path = CLIENT_CONFIG.contrat + "/produits/" + produitId + "_" + Date.now() + "_" + file.name;
+    const path = CLIENT_CONFIG.contrat + "/produits/" + produitId + "_" + Date.now() + "_" + sanitizeFileName(file.name);
     try {
       const res = await fetch(SUPABASE_URL + "/storage/v1/object/documents/" + path, {
         method:"POST",
@@ -8718,13 +8856,20 @@ function Habilitations() {
 
   useEffect(() => {
     Promise.all([
-      sbGet("habilitations").catch(()=>[]),
+      sbGet("habilitations").catch(()=>null),   // null = echec (≠ liste vide) : on ne re-amorce pas sur un echec
       sbFetch("config_logos?id=eq.main","GET").catch(()=>[]),
     ]).then(([data, cfg]) => {
       var hc = (cfg && cfg[0] && cfg[0].hab_config) || null;
       var orderIds = (hc && Array.isArray(hc.order) && hc.order.length) ? hc.order : (function(){ try { return JSON.parse(localStorage.getItem("aads_hab_order")||"null"); } catch(e){ return null; } })();
       if (hc && Array.isArray(hc.hidden)) { setHiddenIds(hc.hidden); try { localStorage.setItem("aads_hab_hidden", JSON.stringify(hc.hidden)); } catch(e){} }
+      // Verrou de ré-amorçage persistant : des qu on a vu des techniciens en base
+      // (ou qu on a amorce une fois), on ne ré-amorce PLUS JAMAIS. Protege contre
+      // une lecture vide transitoire (RLS/reseau) qui reecraserait toutes les equipes.
+      var SEED_KEY = "aads_hab_seeded_" + (CLIENT_CONFIG.contrat||"x");
+      var alreadySeeded = false;
+      try { alreadySeeded = localStorage.getItem(SEED_KEY) === "1"; } catch(e){}
       if (data && data.length > 0) {
+        try { localStorage.setItem(SEED_KEY, "1"); } catch(e){}   // base peuplee : verrou pose
         try {
           if (orderIds && Array.isArray(orderIds)) {
             const order = orderIds;
@@ -8738,8 +8883,13 @@ function Habilitations() {
             setTechniciens(data.map(h=>({...h, equipe:h.equipe||"3d"})));
           }
         } catch(e) { setTechniciens(data.map(h=>({...h, equipe:h.equipe||"3d"}))); }
-      } else {
-        HABILITATIONS.forEach(h => sbUpsert("habilitations", { id:String(h.id), contrat:CLIENT_CONFIG.contrat, nom:h.nom, role:h.role, actif:h.actif, certiphyto:h.certiphyto, certibiocide:h.certibiocide, hab_elec:h.habElec||false, caces:h.caces, pack_sec:h.packSec||false, telephone:h.telephone||"", email:h.email||"", equipe:"3d" }));
+      } else if (Array.isArray(data) && CLIENT_CONFIG.contrat && !alreadySeeded) {
+        // Ré-amorcer UNIQUEMENT si : base reellement vide (data === [] et non un echec
+        // de chargement) ET contrat resolu ET jamais amorce auparavant (verrou absent).
+        // On respecte l equipe par defaut ; on pose le verrou pour interdire toute
+        // reprise ulterieure (une base deja peuplee ne doit jamais etre reecrasee).
+        try { localStorage.setItem(SEED_KEY, "1"); } catch(e){}
+        HABILITATIONS.forEach(h => sbUpsert("habilitations", { id:String(h.id), contrat:CLIENT_CONFIG.contrat, nom:h.nom, role:h.role, actif:h.actif, certiphyto:h.certiphyto, certibiocide:h.certibiocide, hab_elec:h.habElec||false, caces:h.caces, pack_sec:h.packSec||false, telephone:h.telephone||"", email:h.email||"", equipe:h.equipe||"3d" }));
       }
       habLoadedRef.current = true;
     }).catch(()=>{ habLoadedRef.current = true; });
@@ -8779,7 +8929,7 @@ function Habilitations() {
   async function uploadDoc(techId, file, type) {
     if (!file) return;
     setUploading(techId+"_"+type);
-    const path = CLIENT_CONFIG.contrat + "/hab/" + techId + "_" + type.replace(/ /g,"_") + "_" + file.name;
+    const path = CLIENT_CONFIG.contrat + "/hab/" + techId + "_" + type.replace(/ /g,"_") + "_" + Date.now() + "_" + sanitizeFileName(file.name);
     try {
       const res = await fetch(SUPABASE_URL + "/storage/v1/object/documents/" + path, {
         method:"POST",
@@ -8968,11 +9118,20 @@ function Habilitations() {
               {selTech.email && <div style={{ fontSize:12, color:"#94a3b8", marginBottom:12 }}>✉ {selTech.email}</div>}
               {!selTech.telephone && !selTech.email && <div style={{ marginBottom:12 }}/>}
               <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
-                {CERTIFS.map(c=>(
-                  <span key={c.key} style={{ fontSize:10, fontWeight:700, color:selTech[c.key]?"#22c55e":"#5a7090", background:selTech[c.key]?"#22c55e22":"#1a2540", border:"1px solid "+(selTech[c.key]?"#22c55e44":"#3d5270"), borderRadius:6, padding:"2px 8px" }}>
-                    {selTech[c.key]?"✓":""} {c.label}
-                  </span>
-                ))}
+                {CERTIFS.map(c=>{
+                  // Lien pastille <-> document : si un doc du meme type est importe,
+                  // la pastille devient cliquable (ouvre le justificatif) et affiche un trombone.
+                  const doc = selDocs.find(d => (d.type||"") === c.label);
+                  const has = selTech[c.key];
+                  return (
+                    <span key={c.key}
+                      onClick={doc ? ()=>window.open(doc.url, "_blank", "noopener") : undefined}
+                      title={doc ? ("Ouvrir le justificatif : "+doc.nom) : undefined}
+                      style={{ fontSize:10, fontWeight:700, color:has?"#22c55e":"#5a7090", background:has?"#22c55e22":"#1a2540", border:"1px solid "+(has?"#22c55e44":"#3d5270"), borderRadius:6, padding:"2px 8px", cursor:doc?"pointer":"default", textDecoration:doc?"underline":"none" }}>
+                      {has?"✓":""} {c.label} {doc?"📎":""}
+                    </span>
+                  );
+                })}
               </div>
 
               {/* Upload document */}
@@ -9104,7 +9263,7 @@ function Agrements() {
   async function uploadDoc(agId, file) {
     if (!file) return;
     setUploading(agId);
-    const path = CLIENT_CONFIG.contrat + "/agrements/" + agId + "_" + Date.now() + "_" + file.name;
+    const path = CLIENT_CONFIG.contrat + "/agrements/" + agId + "_" + Date.now() + "_" + sanitizeFileName(file.name);
     try {
       const res = await fetch(SUPABASE_URL + "/storage/v1/object/documents/" + path, {
         method:"POST",
@@ -9301,7 +9460,7 @@ function ContratDevis() {
   async function uploadDoc(docId, file) {
     if (!file) return;
     setUploading(docId);
-    const path = CLIENT_CONFIG.contrat + "/contrats/" + docId + "_" + file.name;
+    const path = CLIENT_CONFIG.contrat + "/contrats/" + docId + "_" + Date.now() + "_" + sanitizeFileName(file.name);
     try {
       const res = await fetch(SUPABASE_URL + "/storage/v1/object/documents/" + path, {
         method:"POST",
@@ -11133,12 +11292,16 @@ function GestionPostes({ postes, setPostes }) {
   const [newMacroInput, setNewMacroInput] = useState("");
   const [typesList, setTypesList] = useState(()=>{ try { const s = window.localStorage.getItem("aads_types_list"); const a = s?JSON.parse(s):null; return (Array.isArray(a)&&a.length)?a:["RE","RI","DEIV","PIV","PC","Autre"]; } catch(e) { return ["RE","RI","DEIV","PIV","PC","Autre"]; } });
   const [newTypeInput, setNewTypeInput] = useState("");
+  const APPATS_DEFAUT = ["Placebo","Toxique","Capture mécanique","Capture glu","Multicapture","Electrique"];
+  const [appatsList, setAppatsList] = useState(()=>{ try { const s = window.localStorage.getItem("aads_appats_list"); const a = s?JSON.parse(s):null; return (Array.isArray(a)&&a.length)?a:APPATS_DEFAUT; } catch(e) { return APPATS_DEFAUT; } });
+  const [newAppatInput, setNewAppatInput] = useState("");
+  useEffect(()=>{ try { window.localStorage.setItem("aads_appats_list", JSON.stringify(appatsList)); } catch(e) {} }, [appatsList]);
   const [showManageLists, setShowManageLists] = useState(false);
   useEffect(()=>{ try { window.localStorage.setItem("aads_macros_list", JSON.stringify(macrosList)); } catch(e) {} }, [macrosList]);
   useEffect(()=>{ try { window.localStorage.setItem("aads_types_list", JSON.stringify(typesList)); } catch(e) {} }, [typesList]);
   // Persistance en base (partagee entre appareils/techniciens) des listes macro/types.
-  function saveListesPostes(macros, types) {
-    var payload = { macros: macros, types: types };
+  function saveListesPostes(macros, types, appats) {
+    var payload = { macros: macros, types: types, appats: (appats || appatsList) };
     sbFetch("config_logos?id=eq.main", "PATCH", { listes_postes: payload }, { Prefer:"return=representation" })
       .then(function(r){ if (!r || (Array.isArray(r) && r.length === 0)) { sbFetch("config_logos", "POST", { id:"main", listes_postes: payload }, { Prefer:"resolution=merge-duplicates" }).catch(function(){}); } })
       .catch(function(){});
@@ -11149,9 +11312,20 @@ function GestionPostes({ postes, setPostes }) {
         var lp = data[0].listes_postes;
         if (lp && Array.isArray(lp.macros) && lp.macros.length) { setMacrosList(lp.macros); try { window.localStorage.setItem("aads_macros_list", JSON.stringify(lp.macros)); } catch(e){} }
         if (lp && Array.isArray(lp.types) && lp.types.length) { setTypesList(lp.types); try { window.localStorage.setItem("aads_types_list", JSON.stringify(lp.types)); } catch(e){} }
+        if (lp && Array.isArray(lp.appats) && lp.appats.length) { setAppatsList(lp.appats); try { window.localStorage.setItem("aads_appats_list", JSON.stringify(lp.appats)); } catch(e){} }
       }
     }).catch(function(){});
   }, []);
+  function addAppat(value) {
+    const v = (value||"").trim();
+    if (!v || appatsList.includes(v)) { setNewAppatInput(""); return; }
+    const next = [...appatsList, v];
+    setAppatsList(next); saveListesPostes(macrosList, typesList, next); setNewAppatInput("");
+  }
+  function removeAppat(v) {
+    const next = appatsList.filter(a=>a!==v);
+    setAppatsList(next); saveListesPostes(macrosList, typesList, next);
+  }
 
   function addMacro(value, applyTo) {
     const v = value.trim();
@@ -11195,8 +11369,12 @@ function GestionPostes({ postes, setPostes }) {
   function startEdit(p) { setEditId(p.id); setEditData({...p}); }
   function saveEdit() {
     setPrevPostes(postes);
-    setPostes(prev=>prev.map(p=>p.id===editId?{...editData}:p));
-    sbUpdate("postes",editId,editData);
+    setPostes(prev=>prev.map(p=>p.id===editId?{...p, ...editData}:p));
+    // On n envoie que les colonnes reelles de la table (evite un 400 sur un champ calcule).
+    const clean = { id:editData.id, zone:editData.zone||"", macro:editData.macro||"", type:editData.type||"",
+      nuisible:editData.nuisible||"Rongeurs", appat:editData.appat||"", statut:editData.statut||"Actif",
+      produit_nu:!!editData.produit_nu, nature:editData.nature||"" };
+    sbUpdate("postes",editId,clean);
     setEditId(null);
   }
   function deletePoste(id) {
@@ -11311,6 +11489,21 @@ function GestionPostes({ postes, setPostes }) {
                 <button onClick={()=>addType(newTypeInput)} style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+</button>
               </div>
             </div>
+            <div>
+              <div style={{fontSize:10,color:"#22c55e",fontWeight:700,marginBottom:6,textTransform:"uppercase"}}>Capture / appâts</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+                {appatsList.map(a=>(
+                  <span key={a} style={{display:"flex",alignItems:"center",gap:4,background:"#243352",border:"1px solid #3d5270",borderRadius:6,padding:"3px 8px",fontSize:11,color:"#f1f5f9"}}>
+                    {a}
+                    <button onClick={()=>removeAppat(a)} style={{background:"transparent",border:"none",color:"#ef4444",cursor:"pointer",fontSize:10,padding:0,lineHeight:1}}>✕</button>
+                  </span>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:4}}>
+                <input value={newAppatInput} onChange={e=>setNewAppatInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){addAppat(newAppatInput);}}} placeholder="Nouvel appât / capture..." style={{...inpS,flex:1}}/>
+                <button onClick={()=>addAppat(newAppatInput)} style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+</button>
+              </div>
+            </div>
           </div>
         </Card>
       )}
@@ -11335,7 +11528,19 @@ function GestionPostes({ postes, setPostes }) {
             </div>
             <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:2}}>Nuisible</label>
               <select value={newP.nuisible} onChange={e=>setNewP(p=>({...p,nuisible:e.target.value}))} style={inpS}>{NUISIBLES_P.map(n=><option key={n}>{n}</option>)}</select></div>
-            <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:2}}>Appât</label><input value={newP.appat} onChange={e=>setNewP(p=>({...p,appat:e.target.value}))} style={inpS}/></div>
+            <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:2}}>Capture / appât</label>
+              <select value={newP.appat||""} onChange={e=>setNewP(p=>({...p,appat:e.target.value}))} style={inpS}>
+                <option value="">—</option>
+                {appatsList.map(a=><option key={a} value={a}>{a}</option>)}
+              </select></div>
+            <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:2}}>Produit nu</label>
+              <div style={{padding:"5px 0"}}><input type="checkbox" checked={!!newP.produit_nu} onChange={e=>setNewP(p=>({...p,produit_nu:e.target.checked}))} style={{width:16,height:16,cursor:"pointer"}}/></div></div>
+            {((newP.type==="DEIV")||(newP.nuisible==="Insectes volants")) && (
+              <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:2}}>Nature (DEIV)</label>
+                <select value={newP.nature||""} onChange={e=>setNewP(p=>({...p,nature:e.target.value}))} style={inpS}>
+                  <option value="">—</option><option value="Destructeur">Destructeur</option><option value="Monitoring">Monitoring</option>
+                </select></div>
+            )}
             <div><label style={{fontSize:9,color:"#7a90aa",display:"block",marginBottom:2}}>Statut</label><select value={newP.statut||"Actif"} onChange={e=>setNewP(p=>({...p,statut:e.target.value}))} style={inpS}>{STATUTS_POSTES.map(s=><option key={s}>{s}</option>)}</select></div>
           </div>
           <div style={{display:"flex",gap:6}}>
@@ -11355,8 +11560,8 @@ function GestionPostes({ postes, setPostes }) {
       </div>
       <div style={{fontSize:10,color:"#5a7090",marginBottom:6,fontStyle:"italic"}}>{reorderActif ? "Glisser une ligne pour reordonner les postes. L ordre est enregistre pour tous." : "Retire la recherche et le filtre nuisible pour pouvoir reordonner par glisser-deposer."}</div>
       <Card style={{padding:0,overflow:"hidden"}}>
-        <div style={{background:"#1a2540",padding:"8px 14px",display:"grid",gridTemplateColumns:"70px 1fr 110px 70px 80px 70px 80px 80px",gap:8,fontSize:9,fontWeight:700,color:"#7a90aa",textTransform:"uppercase"}}>
-          <div>N°</div><div>Zone</div><div>Macro</div><div>Type</div><div>Nuisible</div><div>Capture</div><div>Statut</div><div>Actions</div>
+        <div style={{background:"#1a2540",padding:"8px 14px",display:"grid",gridTemplateColumns:"64px 1fr 88px 52px 74px 104px 58px 86px 70px 66px",gap:8,fontSize:9,fontWeight:700,color:"#7a90aa",textTransform:"uppercase"}}>
+          <div>N°</div><div>Zone</div><div>Macro</div><div>Type</div><div>Nuisible</div><div>Capture</div><div>Produit nu</div><div>Nature</div><div>Statut</div><div>Actions</div>
         </div>
         <div style={{maxHeight:400,overflowY:"auto"}}>
           {filtered.map((p,i)=>(
@@ -11367,7 +11572,7 @@ function GestionPostes({ postes, setPostes }) {
               onDragLeave={()=>{ if(dragOverId===p.id) setDragOverId(null); }}
               onDrop={e=>{ e.preventDefault(); onDropReorder(p.id); }}
               onDragEnd={()=>{ dragId.current=null; setDragOverId(null); }}
-              style={{padding:"7px 14px",display:"grid",gridTemplateColumns:"70px 1fr 110px 70px 80px 70px 80px 80px",gap:8,alignItems:"center",borderTop:dragOverId===p.id?"2px solid #3b82f6":"1px solid #243352",background:dragOverId===p.id?"#1d4ed822":(i%2===0?"transparent":"#ffffff04"),cursor:(reorderActif && editId!==p.id)?"grab":"default"}}>
+              style={{padding:"7px 14px",display:"grid",gridTemplateColumns:"64px 1fr 88px 52px 74px 104px 58px 86px 70px 66px",gap:8,alignItems:"center",borderTop:dragOverId===p.id?"2px solid #3b82f6":"1px solid #243352",background:dragOverId===p.id?"#1d4ed822":(i%2===0?"transparent":"#ffffff04"),cursor:(reorderActif && editId!==p.id)?"grab":"default"}}>
               {editId===p.id ? (
                 <>
                   <input value={editData.id} onChange={e=>setEditData(d=>({...d,id:e.target.value}))} style={{...inpS,width:"100%"}}/>
@@ -11377,12 +11582,19 @@ function GestionPostes({ postes, setPostes }) {
                   <select value={editData.nuisible||""} onChange={e=>setEditData(d=>({...d,nuisible:e.target.value}))} style={inpS}>{NUISIBLES_P.map(n=><option key={n}>{n}</option>)}</select>
                   <select value={editData.appat||""} onChange={e=>setEditData(d=>({...d,appat:e.target.value}))} style={inpS}>
                     <option value="">—</option>
-                    <option value="Glue">Glue</option>
-                    <option value="Grille">Grille</option>
-                    <option value="Toxique">Toxique</option>
-                    <option value="Lumiere">Lumiere</option>
-                    <option value="Autre">Autre</option>
+                    {appatsList.map(a=><option key={a} value={a}>{a}</option>)}
+                    {editData.appat && !appatsList.includes(editData.appat) && <option value={editData.appat}>{editData.appat}</option>}
                   </select>
+                  <div style={{display:"flex",justifyContent:"center"}}>
+                    <input type="checkbox" checked={!!editData.produit_nu} onChange={e=>setEditData(d=>({...d,produit_nu:e.target.checked}))} style={{width:16,height:16,cursor:"pointer"}}/>
+                  </div>
+                  {((editData.type==="DEIV")||(editData.nuisible==="Insectes volants")) ? (
+                    <select value={editData.nature||""} onChange={e=>setEditData(d=>({...d,nature:e.target.value}))} style={inpS}>
+                      <option value="">—</option>
+                      <option value="Destructeur">Destructeur</option>
+                      <option value="Monitoring">Monitoring</option>
+                    </select>
+                  ) : <div style={{fontSize:10,color:"#5a7090",textAlign:"center"}}>—</div>}
                   <select value={editData.statut||"Actif"} onChange={e=>setEditData(d=>({...d,statut:e.target.value}))} style={inpS}>{STATUTS_POSTES.map(s=><option key={s}>{s}</option>)}</select>
                   <div style={{display:"flex",gap:4}}>
                     <button onClick={saveEdit} style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:5,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>OK</button>
@@ -11397,6 +11609,8 @@ function GestionPostes({ postes, setPostes }) {
                   <div style={{fontSize:10,color:"#7a90aa"}}>{p.type}</div>
                   <div style={{fontSize:10,color:NUISIBLE_COLORS[p.nuisible||"Rongeurs"]||"#7a90aa",fontWeight:600}}>{p.nuisible||"Rongeurs"}</div>
                   <div style={{fontSize:10,color:p.appat?"#f1f5f9":"#5a7090"}}>{p.appat||"—"}</div>
+                  <div style={{textAlign:"center",fontSize:12,color:p.produit_nu?"#22c55e":"#5a7090",fontWeight:700}}>{p.produit_nu?"✓":"—"}</div>
+                  <div style={{fontSize:10,color:p.nature?"#c084fc":"#5a7090"}}>{((p.type==="DEIV")||(p.nuisible==="Insectes volants"))?(p.nature||"—"):"—"}</div>
                   <div style={{fontSize:10,color:p.statut==="Actif"||!p.statut?"#22c55e":p.statut==="Disparu"?"#ef4444":"#f59e0b",fontWeight:600}}>{p.statut||"Actif"}</div>
                   <div style={{display:"flex",gap:4}}>
                     <button onClick={()=>startEdit(p)} style={{background:"#1d4ed822",color:"#3b82f6",border:"1px solid #3b82f644",borderRadius:5,padding:"2px 7px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
@@ -11995,6 +12209,29 @@ function PlanImplantation({ seuilsGlobaux }) {
   const [showAllPlans, setShowAllPlans] = useState(false);
   const [selDate, setSelDate]         = useState(null);
   const [filterNuisibleArr, setFilterNuisibleArr] = useState([]);
+  const [imgReflow, setImgReflow] = useState(0);   // force un recalcul des pastilles quand l image est chargee
+  const planScrollRef = React.useRef(null);        // conteneur defilant du plan (reset scroll au chargement)
+  const [filterProduitNu, setFilterProduitNu] = useState("tous");   // tous | oui | non
+  const [filterNaturePlan, setFilterNaturePlan] = useState("toutes"); // toutes | Destructeur | Monitoring
+  const [filterMacroPlan, setFilterMacroPlan]   = useState([]); // [] = toutes les zones ; sinon liste de macros
+  // Un poste est visible sur le plan s il passe TOUS les filtres (cumulables).
+  function posteVisiblePlan(p) {
+    if (!p) return false;
+    if (p.statut==="Désactivé") return false;
+    if (filterProduitNu==="oui" && !p.produit_nu) return false;
+    if (filterProduitNu==="non" && p.produit_nu) return false;
+    if (filterNaturePlan!=="toutes") {
+      const estDeiv = (p.type==="DEIV")||((p.nuisible||"")==="Insectes volants");
+      if (!estDeiv || (p.nature||"")!==filterNaturePlan) return false;
+    }
+    if (filterMacroPlan.length>0 && filterMacroPlan.indexOf(p.macro||"")===-1) return false;
+    if (filterNuisibleArr.length>0) {
+      const nuisible = p.nuisible||"Rongeurs";
+      const ok = filterNuisibleArr.some(f=>{ if(f==="__RE")return posteEstExt(p); if(f==="__RI")return posteEstInt(p); return nuisible===f; });
+      if (!ok) return false;
+    }
+    return true;
+  }
   const [modeColor, setModeColor]     = useState("type");
   const [zoom, setZoom]               = useState(()=>{
     try { const saved = window.localStorage && window.localStorage.getItem("aads_plan_zoom"); return saved ? parseInt(saved) : 80; } catch(e) { return 80; }
@@ -12388,15 +12625,12 @@ function PlanImplantation({ seuilsGlobaux }) {
   // mais conserves en base (leur position n est pas supprimee).
   const postesNonDesactives = postes.filter(p => p.statut !== "Désactivé");
   const planPostes = getPts(activePlan).filter(pt => (pt.page||0) === activePage);
-  const filteredPostes = filterNuisibleArr.length===0 ? postesNonDesactives : postesNonDesactives.filter(p => {
-    const nuisible = p.nuisible||"Rongeurs";
-    const id = p.id||"";
-    return filterNuisibleArr.some(f => {
-      if (f === "__RE") return posteEstExt(p);
-      if (f === "__RI") return posteEstInt(p);
-      return nuisible === f;
-    });
-  });
+  // Au chargement / changement de plan ou d etage : remet le defilement horizontal a 0
+  // (evite que le plan apparaisse decale a gauche/droite tant qu on n a pas interagi).
+  useEffect(()=>{ if(planScrollRef.current) planScrollRef.current.scrollLeft = 0; }, [activePlan, activePage, imgReflow]);
+  // Liste "a placer" : memes filtres cumulables que les pastilles.
+  const filteredPostes = postesNonDesactives.filter(p => posteVisiblePlan(p));
+  const macrosPlan = ["Toutes", ...Array.from(new Set(postesNonDesactives.map(p=>p.macro).filter(Boolean)))];
 
   // KPIs for selected date
   const kpi = selDate ? getPassageStats(selDate) : {tot:0, part:0, ok:postesNonDesactives.length, total:postesNonDesactives.length};
@@ -12622,7 +12856,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       pts.forEach(pt => {
         const p = postes.find(x=>x.id===pt.id);
         if (!p) return;
-        if (filterNuisibleArr.length>0 && !filterNuisibleArr.some(f=>{if(f==="__RE")return posteEstExt(p);if(f==="__RI")return posteEstInt(p);return (p.nuisible||"Rongeurs")===f;})) return;
+        if (!posteVisiblePlan(p)) return;   // filtres cumulables (nuisible, produit nu, nature, macro, desactive)
         const col = getPosteColor(p, selDate);
         const x = (parseFloat(pt.x)/100) * 900;
         const y = (parseFloat(pt.y)/100) * 600;
@@ -12706,7 +12940,7 @@ function PlanImplantation({ seuilsGlobaux }) {
       pts.forEach(pt => {
         const p = postes.find(x=>x.id===pt.id);
         if (!p) return;
-        if (filterNuisibleArr.length>0 && !filterNuisibleArr.some(f=>{if(f==="__RE")return posteEstExt(p);if(f==="__RI")return posteEstInt(p);return (p.nuisible||"Rongeurs")===f;})) return;
+        if (!posteVisiblePlan(p)) return;   // filtres cumulables (nuisible, produit nu, nature, macro, desactive)
         const col = getPosteColor(p, selDate);
         const x = (parseFloat(pt.x)/100) * img.width;
         const y = (parseFloat(pt.y)/100) * img.height;
@@ -12860,25 +13094,7 @@ function PlanImplantation({ seuilsGlobaux }) {
         </Card>
       )}
 
-      {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
-        <div style={{background:"#243352",borderRadius:10,padding:"14px 18px",textAlign:"center"}}>
-          <div style={{fontSize:26,fontWeight:900,color:"#3b82f6"}}>{selDate ? kpi.total : postesNonDesactives.length}</div>
-          <div style={{fontSize:11,color:"#7a90aa",marginTop:2}}>{selDate ? "Postes contrôlés" : "Postes"}</div>
-        </div>
-        <div style={{background:"#243352",borderRadius:10,padding:"14px 18px",textAlign:"center"}}>
-          <div style={{fontSize:26,fontWeight:900,color:"#ef4444"}}>{kpi.tot}</div>
-          <div style={{fontSize:11,color:"#7a90aa",marginTop:2}}>Conso. totale</div>
-        </div>
-        <div style={{background:"#243352",borderRadius:10,padding:"14px 18px",textAlign:"center"}}>
-          <div style={{fontSize:26,fontWeight:900,color:"#f59e0b"}}>{kpi.part}</div>
-          <div style={{fontSize:11,color:"#7a90aa",marginTop:2}}>Conso. partielle</div>
-        </div>
-        <div style={{background:"#243352",borderRadius:10,padding:"14px 18px",textAlign:"center"}}>
-          <div style={{fontSize:26,fontWeight:900,color:"#22c55e"}}>{kpi.ok}</div>
-          <div style={{fontSize:11,color:"#7a90aa",marginTop:2}}>Sans activité</div>
-        </div>
-      </div>
+      {/* KPIs retires du plan d implantation a la demande */}
 
       {/* Mode couleur */}
       <div style={{display:"flex",gap:6,marginBottom:12}}>
@@ -12889,6 +13105,43 @@ function PlanImplantation({ seuilsGlobaux }) {
           </button>
         ))}
       </div>
+
+      {/* Filtres supplementaires : produit nu, nature DEIV, macro-zone (cumulables avec le nuisible) */}
+      <Card style={{marginBottom:14,padding:"12px 16px"}}>
+        <div style={{fontSize:10,fontWeight:700,color:"#7a90aa",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Filtres d affichage</div>
+        <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <div>
+            <div style={{fontSize:9,color:"#7a90aa",marginBottom:3}}>Produit nu</div>
+            <div style={{display:"flex",gap:5}}>
+              {[["tous","Tous"],["oui","En zone produit nu"],["non","Hors produit nu"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setFilterProduitNu(v)}
+                  style={{background:filterProduitNu===v?"#22c55e22":"transparent",color:filterProduitNu===v?"#22c55e":"#7a90aa",border:"1px solid "+(filterProduitNu===v?"#22c55e":"#3d5270"),borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:filterProduitNu===v?700:500,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:"#7a90aa",marginBottom:3}}>DEIV — nature</div>
+            <div style={{display:"flex",gap:5}}>
+              {[["toutes","Tous"],["Destructeur","Destructeur"],["Monitoring","Monitoring"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setFilterNaturePlan(v)}
+                  style={{background:filterNaturePlan===v?"#c084fc22":"transparent",color:filterNaturePlan===v?"#c084fc":"#7a90aa",border:"1px solid "+(filterNaturePlan===v?"#c084fc":"#3d5270"),borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:filterNaturePlan===v?700:500,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:"#7a90aa",marginBottom:3}}>Zone macro (sélection multiple)</div>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              <button onClick={()=>setFilterMacroPlan([])}
+                style={{background:filterMacroPlan.length===0?"#3b82f622":"transparent",color:filterMacroPlan.length===0?"#3b82f6":"#7a90aa",border:"1px solid "+(filterMacroPlan.length===0?"#3b82f6":"#3d5270"),borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:filterMacroPlan.length===0?700:500,cursor:"pointer",fontFamily:"inherit"}}>Toutes</button>
+              {macrosPlan.filter(m=>m!=="Toutes").map(m=>{
+                const on = filterMacroPlan.indexOf(m)>=0;
+                return <button key={m} onClick={()=>setFilterMacroPlan(prev=>on?prev.filter(x=>x!==m):[...prev,m])}
+                  style={{background:on?"#3b82f622":"transparent",color:on?"#3b82f6":"#7a90aa",border:"1px solid "+(on?"#3b82f6":"#3d5270"),borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}}>{m}</button>;
+              })}
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* Filtre nuisible */}
       <Card style={{marginBottom:14,padding:"12px 16px"}}>
@@ -13334,12 +13587,12 @@ function PlanImplantation({ seuilsGlobaux }) {
           </div>
         )}
         {/* Plan image */}
-        <div style={{overflowX:"auto",overflowY:"visible"}}>
+        <div ref={planScrollRef} style={{overflowX:"auto",overflowY:"visible"}}>
           <div id="plan-export-zone"
             style={{position:"relative",width:zoom+"%",minWidth:600,cursor:placingPoste||movingPoste?"crosshair":"default"}}
             onClick={handlePlanClick}>
             {planImagesArr[activePage]
-              ? <img src={planImagesArr[activePage].url} alt={(activePlanData&&activePlanData.label)} style={{width:"100%",display:"block",userSelect:"none"}} draggable={false}/>
+              ? <img src={planImagesArr[activePage].url} alt={(activePlanData&&activePlanData.label)} style={{width:"100%",display:"block",userSelect:"none"}} draggable={false} onLoad={()=>setImgReflow(v=>v+1)}/>
               : activePlanData&&activePlanData.dessine
               ? <svg viewBox="0 0 900 600" style={{width:"100%",display:"block",background:"#fff"}}>
                   {activePlanData.backgroundImg && <image href={activePlanData.backgroundImg} x="0" y="0" width="900" height="600" preserveAspectRatio="xMidYMid meet"/>}
@@ -13362,8 +13615,7 @@ function PlanImplantation({ seuilsGlobaux }) {
             {planPostes.map(pt=>{
               const p=postes.find(p=>p.id===pt.id);
               if(!p)return null;
-              if(p.statut==="Désactivé")return null;   // poste desactive : masque du plan (position conservee en base)
-              if(filterNuisibleArr.length>0&&!filterNuisibleArr.some(f=>{if(f==="__RE")return posteEstExt(p);if(f==="__RI")return posteEstInt(p);return (p.nuisible||"Rongeurs")===f;}))return null;
+              if(!posteVisiblePlan(p))return null;   // filtres cumulables : desactive, produit nu, nature DEIV, macro, nuisible
               const col=getPosteColor(p,selDate);
               const isHov=hover===pt.id;
               const isMov=movingPoste===pt.id;
