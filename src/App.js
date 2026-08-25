@@ -330,6 +330,22 @@ function sanitizeFileName(name) {
     .replace(/_+/g, "_");                                // compacte les _ multiples
 }
 
+// Deduit la categorie 5M (Milieu / Matiere / Materiel / Methode / Main d'oeuvre)
+// a partir du texte d'une description. Priorite a la position "— X —" (format des
+// audits importes), puis recherche libre insensible aux accents. Defaut : Methode.
+function detect5M(txt) {
+  var s = " " + (txt || "") + " ";
+  var Ms = ["Milieu", "Matériel", "Matière", "Méthode", "Main d'oeuvre"];
+  for (var i = 0; i < Ms.length; i++) { if (s.indexOf("— " + Ms[i] + " —") >= 0) return Ms[i]; }
+  var l = s.toLowerCase();
+  if (l.indexOf("milieu") >= 0) return "Milieu";
+  if (l.indexOf("matériel") >= 0 || l.indexOf("materiel") >= 0) return "Matériel";
+  if (l.indexOf("matière") >= 0 || l.indexOf("matiere") >= 0) return "Matière";
+  if (l.indexOf("méthode") >= 0 || l.indexOf("methode") >= 0) return "Méthode";
+  if (l.indexOf("main d") >= 0 && l.indexOf("oeuvre") >= 0) return "Main d'oeuvre";
+  return "Méthode";
+}
+
 // Place ou deplace un poste sur un plan. Un poste ne peut etre que sur un seul plan a la fois
 // (contrainte unique en base sur contrat+poste_id). Si le poste existe deja ailleurs, on le
 // deplace (UPDATE plan_id+x+y) au lieu de tenter un INSERT qui echouerait en doublon.
@@ -14037,7 +14053,7 @@ function Audit({ seuilsGlobaux }) {
     try {
       await sbUpsertStrict("plan_actions", {
         id: actionId, contrat: CLIENT_CONFIG.contrat,
-        titre5m: "Méthode", type: "corrective", priorite,
+        titre5m: detect5M(obs.description), type: "corrective", priorite,
         zone: obs.zone || "",
         description: obs.description || "",
         recommandation: obs.action || "",
