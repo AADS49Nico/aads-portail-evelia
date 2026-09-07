@@ -1029,6 +1029,7 @@ function SignaturePad({ value, onChange, label }) {
 function _ficheCaptures(s){ let n=0; if(s) Object.keys(s).forEach(k=>{ if(k.indexOf("cap_")===0){ const v=parseInt(s[k]||0); if(!isNaN(v)) n+=v; } }); return n; }
 function _ficheConsomme(s){ const e=(s&&s.etat!=null)?String(s.etat).trim():""; if(!e)return false; const l=e.toLowerCase(); return l!=="aucune"&&l!=="ras"&&l!=="0"&&l!=="non"; }
 function _ficheExterieur(po){ if(!po)return false; if(po.type==="RE")return true; if(po.type==="RI")return false; return /ext/i.test(String(po.macro||po.zone||"")); }
+function _ficheValide(s){ return !!s && (s.vu===true || s.vu==="true" || _ficheConsomme(s) || _ficheCaptures(s)>0); }
 
 // Genere et imprime (PDF navigateur) la fiche d'intervention d'un passage.
 function genererFicheIntervention(p, postesTous, planActions){
@@ -1044,6 +1045,7 @@ function genererFicheIntervention(p, postesTous, planActions){
   Object.keys(saisies).forEach(id=>{
     const s=saisies[id]; if(s==null) return;
     const po = posteById[id] || { id, zone:"", macro:"", type:"" };
+    if(!_ficheValide(s)) return;
     (_ficheExterieur(po)?grp.ext:grp.int).push({ id, po, s });
   });
   const triNat=(a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true});
@@ -1081,7 +1083,7 @@ function genererFicheIntervention(p, postesTous, planActions){
   let corps = "";
   if(isDeiv){
     const CATS=["Moucherons","Mouches","Moustiques","Hyménoptères","Lépidoptères","Coléoptères","Punaises","Tipules"];
-    const rows = Object.keys(saisies).map(id=>{ const s=saisies[id]||{}; const tot=CATS.reduce((a,c)=>a+(parseInt(s["iv_"+c]||0)||0),0); const po=posteById[id]||{}; return "<tr><td style='border:1px solid #e5e7eb;padding:4px 8px;font-family:monospace;font-weight:700'>"+esc(id)+"</td><td style='border:1px solid #e5e7eb;padding:4px 8px'>"+esc(po.zone||"")+"</td><td style='border:1px solid #e5e7eb;padding:4px 8px;text-align:center'>"+tot+"</td></tr>"; }).join("");
+    const rows = Object.keys(saisies).filter(function(id){ var s=saisies[id]||{}; var tt=CATS.reduce(function(a,c){return a+(parseInt(s["iv_"+c]||0)||0);},0); return s.vu===true||tt>0; }).map(id=>{ const s=saisies[id]||{}; const tot=CATS.reduce((a,c)=>a+(parseInt(s["iv_"+c]||0)||0),0); const po=posteById[id]||{}; return "<tr><td style='border:1px solid #e5e7eb;padding:4px 8px;font-family:monospace;font-weight:700'>"+esc(id)+"</td><td style='border:1px solid #e5e7eb;padding:4px 8px'>"+esc(po.zone||"")+"</td><td style='border:1px solid #e5e7eb;padding:4px 8px;text-align:center'>"+tot+"</td></tr>"; }).join("");
     corps = "<div style='"+H3+"'>Appareils DEIV — captures</div>"+
       "<table style='width:100%;border-collapse:collapse;font-size:11px'><thead><tr>"+
       ["Appareil","Zone","Insectes capturés"].map(h=>"<th style='background:#f1f5f9;border:1px solid #e5e7eb;padding:5px 8px;text-align:left'>"+h+"</th>").join("")+
@@ -1842,12 +1844,14 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
                           {reinvLiees.length} réintervention(s)
                         </span>
                       )}
+                      {(function(){var _pp=String(p.date||"").split("/");var _dd=_pp.length===3?new Date(_pp[2]+"-"+_pp[1]+"-"+_pp[0]):new Date(0);return _dd>=new Date(2026,8,1);})() && (
                       <button
                         onClick={e => { e.stopPropagation(); genererFicheIntervention(p, postesTous, planActions); }}
                         title="Générer la fiche d'intervention en PDF"
                         style={{ fontSize:10, fontWeight:700, background:"#1d4ed822", color:"#3b82f6", border:"1px solid #3b82f644", borderRadius:8, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
                         📄 Fiche PDF
                       </button>
+                      )}
                     </div>
                     {isOpen && (
                       <div style={{ marginTop:14, paddingTop:14, borderTop:"1px solid #3d5270" }}>
@@ -7644,7 +7648,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
   }
 
   function setSaisieField(posteId, field, value) {
-    setSaisies(prev=>({...prev,[posteId]:{...prev[posteId],[field]:value}}));
+    setSaisies(prev=>({...prev,[posteId]:{...prev[posteId],[field]:value, vu:true}}));
     // Sauvegarder la molécule dans le poste pour pré-remplissage futur
     if (field === "molecule" && value) {
       setPostes(prev=>prev.map(p=>p.id===posteId?{...p,molecule_actuelle:value}:p));
@@ -8293,6 +8297,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
                     {/* Valider ce poste : le marque comme fait (grise dans la liste) et passe au suivant */}
                     <button onClick={function(){
                         setMobValides(function(prev){ var n={...prev}; n[poste.id]=true; return n; });
+                        setSaisieField(poste.id,"vu",true);
                         // Passer automatiquement au poste suivant non valide dans la liste filtree
                         var idx = postesFiltres.findIndex(function(pp){ return pp.id === poste.id; });
                         var suivant = "";
