@@ -1608,19 +1608,40 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
   const TECHNICIENS = useTechniciens();
   const ACTIONS_LIST = ["Remplacement appats","Renouvellement pieges","Pose piege supplementaire","Colmatage passage","Nettoyage poste","Inspection renforcee","Traitement curatif","Photo prise","Observation transmise"];
   const [form, setForm] = useState({ date:"", technicien:"", poste:"", anomalie:"", actions:[], observations:"", statut:"En cours" });
+  const [editId, setEditId] = useState(null);
+  const LBL = { fontSize:10, color:"#7a90aa", fontWeight:600, display:"block", marginBottom:3, textTransform:"uppercase" };
 
   function toggleAction(a) { setForm(p => ({ ...p, actions: p.actions.includes(a) ? p.actions.filter(x=>x!==a) : [...p.actions, a] })); }
 
+  function toInputDate(d) { return d && d.indexOf("/") !== -1 ? d.split("/").reverse().join("-") : (d || ""); }
+  function parseActionsList(a) { return Array.isArray(a) ? a : (typeof a === "string" ? (function(){ try { return JSON.parse(a || "[]"); } catch(_e) { return []; } })() : []); }
+
+  function startEditReinv(r) {
+    setEditId(r.id);
+    setForm({ date: toInputDate(r.date), technicien: r.technicien || "", poste: r.poste || "", anomalie: r.anomalie || "", actions: parseActionsList(r.actions), observations: r.observations || "", statut: r.statut || "En cours" });
+    setShowForm(true);
+  }
+
   function submitReinv() {
     if (!form.date || !form.technicien || !form.poste) return;
-    const item = { ...form, id: Date.now(), contrat: CLIENT_CONFIG.contrat };
-    setReinterventions(prev => [item, ...prev]);
-    sbUpsert("reinterventions", item);
+    // Date en JJ/MM/AAAA (format commun) et actions en JSON, comme la saisie passage.
+    const dateFmt = form.date.indexOf("-") !== -1 ? form.date.split("-").reverse().join("/") : form.date;
+    const champs = { date: dateFmt, technicien: form.technicien, poste: form.poste, anomalie: form.anomalie, statut: form.statut, observations: form.observations };
+    if (editId !== null) {
+      setReinterventions(prev => prev.map(i => i.id === editId ? { ...i, ...champs, actions: form.actions } : i));
+      sbUpdate("reinterventions", editId, { ...champs, actions: JSON.stringify(form.actions) });
+    } else {
+      const id = Date.now();
+      setReinterventions(prev => [{ id, contrat: CLIENT_CONFIG.contrat, ...champs, actions: form.actions }, ...prev]);
+      sbUpsert("reinterventions", { id, contrat: CLIENT_CONFIG.contrat, ...champs, actions: JSON.stringify(form.actions) });
+    }
     setShowForm(false);
+    setEditId(null);
     setForm({ date:"", technicien:"", poste:"", anomalie:"", actions:[], observations:"", statut:"En cours" });
   }
 
   function deleteReinv(id) {
+    if (!window.confirm("Supprimer cette réintervention ?")) return;
     setReinterventions(prev => prev.filter(i => i.id !== id));
     sbDelete("reinterventions", id);
   }
@@ -1948,6 +1969,8 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
                     ))}
                     {(r.actions||[]).length > 2 && <span style={{ fontSize:10, color:"#7a90aa" }}>+{r.actions.length-2}</span>}
                     <Badge label={r.statut||"En cours"} color={SREINV[r.statut]||"#7a90aa"}/>
+                    <button onClick={e => { e.stopPropagation(); startEditReinv(r); }}
+                      style={{ background:"#1d4ed822", color:"#3b82f6", border:"1px solid #3b82f644", borderRadius:7, padding:"3px 9px", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>✎</button>
                     <button onClick={e => { e.stopPropagation(); deleteReinv(r.id); setSel(null); }}
                       style={{ background:"#ef444422", color:"#ef4444", border:"1px solid #ef444444", borderRadius:7, padding:"3px 9px", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>✕</button>
                   </div>
@@ -1980,6 +2003,26 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
           })}
         </div>
       </div>
+      {showForm && (
+        <div onClick={()=>{setShowForm(false);setEditId(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,padding:"40px 16px",overflowY:"auto"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#243352",border:"1px solid #3d5270",borderRadius:12,padding:20,maxWidth:560,width:"100%"}}>
+            <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:14}}>{editId!==null?"Modifier la réintervention":"Réintervention"}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:10}}>
+              <div><label style={LBL}>Date *</label><input type="date" value={form.date} onChange={e=>setForm(p=>({...p,date:e.target.value}))} style={inp()}/></div>
+              <div><label style={LBL}>Technicien *</label><select value={form.technicien} onChange={e=>setForm(p=>({...p,technicien:e.target.value}))} style={inp()}><option value="">--</option>{TECHNICIENS.map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+              <div><label style={LBL}>Poste(s) *</label><input value={form.poste} onChange={e=>setForm(p=>({...p,poste:e.target.value}))} placeholder="ex: RE26, RE29" style={inp()}/></div>
+              <div><label style={LBL}>Statut</label><select value={form.statut} onChange={e=>setForm(p=>({...p,statut:e.target.value}))} style={inp()}><option value="En cours">En cours</option><option value="Traité">Traité</option><option value="Planifié">Planifié</option></select></div>
+            </div>
+            <div style={{marginBottom:10}}><label style={LBL}>Anomalie</label><input value={form.anomalie} onChange={e=>setForm(p=>({...p,anomalie:e.target.value}))} style={inp()}/></div>
+            <div style={{marginBottom:10}}><label style={LBL}>Actions</label><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{ACTIONS_LIST.map(a=>{const c=form.actions.includes(a);return <button key={a} onClick={()=>toggleAction(a)} style={{background:c?"#1d4ed822":"#1a2540",color:c?"#3b82f6":"#7a90aa",border:"1px solid "+(c?"#3b82f6":"#3d5270"),borderRadius:8,padding:"5px 12px",fontSize:11,fontWeight:c?700:400,cursor:"pointer",fontFamily:"inherit"}}>{a}</button>;})}</div></div>
+            <div style={{marginBottom:14}}><label style={LBL}>Observations</label><textarea rows={2} value={form.observations} onChange={e=>setForm(p=>({...p,observations:e.target.value}))} style={{...inp(),resize:"vertical"}}/></div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={submitReinv} style={{background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{editId!==null?"Enregistrer les modifications":"Enregistrer"}</button>
+              <button onClick={()=>{setShowForm(false);setEditId(null);}} style={{background:"transparent",color:"#7a90aa",border:"1px solid #3d5270",borderRadius:8,padding:"8px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
       {lightboxImg && (
         <div onClick={()=>setLightboxImg(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,cursor:"zoom-out"}}>
           <img src={lightboxImg} style={{maxWidth:"90vw",maxHeight:"90vh",borderRadius:10,objectFit:"contain"}}/>
