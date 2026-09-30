@@ -13451,14 +13451,79 @@ function PlanImplantation({ seuilsGlobaux }) {
     img.src = curImg.url;
   }
 
+  // Rend une page (etage) image en dataURL PNG (plan + pastilles + legende + titre),
+  // pour assembler tous les etages dans UN SEUL document imprimable.
+  function renderImagePageDataUrl(pageIdx) {
+    return new Promise(function(resolve){
+      const plan = plans.find(p=>p.id===activePlan);
+      if (!plan) { resolve(null); return; }
+      const imgsArr = (plan.images&&plan.images.length)?plan.images.map(function(it){return (it&&typeof it==="object")?{url:it.url||"",name:it.name||""}:{url:it||"",name:""};}):(plan.img?[{url:plan.img,name:""}]:[]);
+      const curImg = imgsArr[pageIdx];
+      if (!curImg || !curImg.url) { resolve(null); return; }
+      const pageName = curImg.name || "";
+      const pts = getPts(activePlan).filter(pt => (pt.page||0)===pageIdx);
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = function(){
+        const canvas = document.createElement("canvas");
+        const scale = 2;
+        canvas.width = img.width*scale; canvas.height = img.height*scale;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0, img.width, img.height);
+        pts.forEach(function(pt){
+          const p = postes.find(x=>x.id===pt.id); if (!p) return; if (!posteVisiblePlan(p)) return;
+          const col = getPosteColor(p, selDate);
+          const x = (parseFloat(pt.x)/100) * img.width;
+          const y = (parseFloat(pt.y)/100) * img.height;
+          canvasPastilleForme(ctx, posteFormes[categorieForme(p)]||"rond", x, y, (PASTILLE_CONFIG.size/2), col);
+          const label = posteLabel(p.id);
+          ctx.fillStyle = PASTILLE_CONFIG.labelColor;
+          ctx.font = "bold "+posteLabelFontSize(label,PASTILLE_CONFIG.labelSize)+"px sans-serif";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(label, x, y);
+        });
+        const legendY = img.height - 30;
+        let legendsC = [];
+        if (modeColor==="etat") { legendsC = [["#22c55e","Sans activité"],["#f59e0b","Partielle"],["#ef4444","Totale / Capture"]]; }
+        else if (modeColor==="type") { legendsC = [[nuisibleColors["__RE"]||"#1e40af","Rongeurs ext.",posteFormes["RE"]||"rond","__RE"],[nuisibleColors["__RI"]||"#60a5fa","Rongeurs int.",posteFormes["RI"]||"rond","__RI"], ...NUISIBLES_LIST.filter(n=>n!=="Rongeurs").map(n=>[nuisibleColors[n]||"#7a90aa",n,posteFormes[n]||"rond",n])].filter(e=>nuisiblesMasques.indexOf(e[3])<0); }
+        else if (modeColor==="zone") { const zoneColors = {"Exterieur":"#3b82f6","Locaux techniques":"#f59e0b","Combles":"#8b5cf6","Emballages":"#22c55e","Conditionnement":"#ef4444","Bureaux":"#06b6d4","Maintenance":"#84cc16","Stockage":"#f97316","Autres":"#7a90aa"}; legendsC = Object.entries(zoneColors); }
+        let lx = 10; ctx.font = "bold 9px sans-serif";
+        legendsC.forEach(function(e){ const c=e[0], l=e[1], forme=e[2]; canvasPastilleForme(ctx, forme||"rond", lx+6, legendY+8, 6, c); ctx.fillStyle="#000"; ctx.textAlign="left"; ctx.textBaseline="middle"; ctx.fillText(l, lx+16, legendY+8); lx += ctx.measureText(l).width + 30; });
+        ctx.fillStyle = "#0f2864"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        ctx.fillText((plan.label||"")+(pageName?" - "+pageName:"")+" - "+CLIENT_CONFIG.nom+(selDate && modeColor!=="type"?" - "+selDate:""), 10, 16);
+        resolve({ dataUrl: canvas.toDataURL("image/png") });
+      };
+      img.onerror = function(){ resolve(null); };
+      img.src = curImg.url;
+    });
+  }
+
   function exportAllPlans() {
     const plan = plans.find(p=>p.id===activePlan);
-    const imgsArr = (plan&&plan.images&&plan.images.length)?plan.images:[];
-    if (imgsArr.length>1) {
-      for (let i=0;i<imgsArr.length;i++) { (function(idx){ setTimeout(function(){ exportPlanPdf(idx); }, idx*1200); })(i); }
-    } else {
-      exportPlanPdf();
-    }
+    if (!plan) { alert("Aucun plan a exporter"); return; }
+    const imgsArr = (plan.images&&plan.images.length)?plan.images:(plan.img?[{url:plan.img,name:""}]:[]);
+    // Plan dessine (SVG) ou un seul etage : on garde l'export unitaire existant.
+    if ((plan.dessine && !plan.img) || imgsArr.length <= 1) { exportPlanPdf(); return; }
+    // Plusieurs etages images : ON OUVRE LA FENETRE TOUT DE SUITE (sinon le
+    // navigateur la bloque apres le chargement asynchrone des images), puis on
+    // rend chaque etage et on ecrit UN SEUL document (une page par etage).
+    const w = window.open("", "_blank");
+    if (!w) { alert("La fenêtre d'impression a été bloquée. Autorisez les pop-ups pour ce site puis réessayez."); return; }
+    w.document.write('<html><head><meta charset="utf-8"/><title>Plans - '+(plan.label||"")+'</title></head><body style="font-family:sans-serif;color:#374151;padding:24px">Génération du PDF ('+imgsArr.length+' étages)…</body></html>');
+    Promise.all(imgsArr.map(function(_, idx){ return renderImagePageDataUrl(idx); })).then(function(pages){
+      const valides = pages.filter(Boolean);
+      if (valides.length === 0) { w.document.body.innerHTML = "Impossible de générer les plans."; return; }
+      let body = "";
+      valides.forEach(function(pg, i){
+        body += '<div style="page-break-after:'+(i<valides.length-1?'always':'auto')+';width:100%;height:100vh;display:flex;align-items:center;justify-content:center;box-sizing:border-box;">'
+              + '<img src="'+pg.dataUrl+'" style="max-width:100%;max-height:100vh;object-fit:contain;display:block;"/></div>';
+      });
+      w.document.open();
+      w.document.write('<html><head><meta charset="utf-8"/><title>Plans - '+(plan.label||"")+'</title><style>*{margin:0;padding:0;}body{background:#fff;}@page{size:A4 landscape;margin:4mm;}</style></head><body>'+body+'</body></html>');
+      w.document.close();
+      setTimeout(function(){ w.focus(); w.print(); }, 500);
+    });
   }
 
   return (
