@@ -15561,7 +15561,7 @@ function AppPortail({ isAdmin, onLogout }) {
     }).catch(function(){});
   }, []);
 
-  const [, forceConfigUpdate] = useState(0);
+  const [configVersion, forceConfigUpdate] = useState(0);
   // Miroir React de SITE_ACTIF : sert de key a View pour la remonter a chaque
   // bascule, ce qui rejoue le chargement des donnees de la page.
   const [siteCourant, setSiteCourant] = useState(SITE_ACTIF);
@@ -15715,11 +15715,16 @@ function AppPortail({ isAdmin, onLogout }) {
     }).catch(()=>{});
   }, []);
 
+  // Recharge les reinterventions quand la config du site est prete (configVersion)
+  // ET a chaque changement de site (siteCourant). Sans ca, le 1er chargement partait
+  // souvent avant que le bon contrat/site soit connu -> liste vide sur les sites
+  // multi-site (ex: Ballan). On applique toujours le resultat (meme vide) pour ne
+  // pas garder la liste d'un autre site.
   useEffect(() => {
     sbGet("reinterventions").then(data => {
-      if (data && data.length > 0) setReinterventions(data.map(r => ({ ...r, actions: typeof r.actions==="string"?JSON.parse(r.actions||"[]"):(r.actions||[]), photos: typeof r.photos==="string"?JSON.parse(r.photos||"[]"):(r.photos||[]) })));
+      if (data) setReinterventions(data.map(r => ({ ...r, actions: typeof r.actions==="string"?JSON.parse(r.actions||"[]"):(r.actions||[]), photos: typeof r.photos==="string"?JSON.parse(r.photos||"[]"):(r.photos||[]) })));
     }).catch(() => {});
-  }, []);
+  }, [siteCourant, configVersion]);
 
   const View = VIEWS[page] || Dashboard;
 
