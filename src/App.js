@@ -8834,17 +8834,41 @@ function Reinterventions({ reinterventions, setReinterventions }) {
   const ACTIONS_LIST = ["Remplacement appâts", "Renouvellement pièges", "Pose piège supplémentaire", "Colmatage passage", "Nettoyage poste", "Inspection renforcée", "Traitement curatif", "Photo prise"];
   const [sel, setSel] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ date: "", technicien: "", poste: "", anomalie: "", actions: [], observations: "", statut: "En cours" });
 
   function toggleAction(a) { setForm(p => ({ ...p, actions: p.actions.includes(a) ? p.actions.filter(x => x !== a) : [...p.actions, a] })); }
 
+  const EMPTY_FORM = { date: "", technicien: "", poste: "", anomalie: "", actions: [], observations: "", statut: "En cours" };
+  // La date est stockee en JJ/MM/AAAA ; l input type=date attend AAAA-MM-JJ.
+  function toInputDate(d) { return d && d.indexOf("/") !== -1 ? d.split("/").reverse().join("-") : (d || ""); }
+  function parseActions(a) { return Array.isArray(a) ? a : (typeof a === "string" ? (function(){ try { return JSON.parse(a || "[]"); } catch(_e) { return []; } })() : []); }
+
+  function startAdd() { setEditId(null); setForm(EMPTY_FORM); setShowForm(true); }
+  function startEdit(item) {
+    setEditId(item.id);
+    setForm({ date: toInputDate(item.date), technicien: item.technicien || "", poste: item.poste || "", anomalie: item.anomalie || "", actions: parseActions(item.actions), observations: item.observations || "", statut: item.statut || "En cours" });
+    setShowForm(true);
+    setSel(null);
+  }
+
   function submit() {
     if (!form.date || !form.technicien || !form.poste) return;
-    const newItem = { ...form, id: Date.now(), contrat: CLIENT_CONFIG.contrat };
-    setReinterventions(prev => [newItem, ...prev]);
-    sbUpsert("reinterventions", newItem);
+    // On enregistre la date en JJ/MM/AAAA (format commun a tout le portail) et
+    // les actions en JSON, comme la saisie depuis un passage.
+    const dateFmt = form.date.indexOf("-") !== -1 ? form.date.split("-").reverse().join("/") : form.date;
+    const champs = { date: dateFmt, technicien: form.technicien, poste: form.poste, anomalie: form.anomalie, statut: form.statut, observations: form.observations };
+    if (editId !== null) {
+      setReinterventions(prev => prev.map(i => i.id === editId ? { ...i, ...champs, actions: form.actions } : i));
+      sbUpdate("reinterventions", editId, { ...champs, actions: JSON.stringify(form.actions) });
+    } else {
+      const id = Date.now();
+      setReinterventions(prev => [{ id, contrat: CLIENT_CONFIG.contrat, ...champs, actions: form.actions }, ...prev]);
+      sbUpsert("reinterventions", { id, contrat: CLIENT_CONFIG.contrat, ...champs, actions: JSON.stringify(form.actions) });
+    }
     setShowForm(false);
-    setForm({ date: "", technicien: "", poste: "", anomalie: "", actions: [], observations: "", statut: "En cours" });
+    setEditId(null);
+    setForm(EMPTY_FORM);
   }
 
   const SCOLOR = { Traité: "#22c55e", "En cours": "#f59e0b", Planifié: "#3b82f6" };
@@ -8856,7 +8880,7 @@ function Reinterventions({ reinterventions, setReinterventions }) {
           <div style={{ fontSize: 22, fontWeight: 800, color: "#f1f5f9", marginBottom: 2 }}>Réinterventions curatives</div>
           <div style={{ fontSize: 13, color: "#7a90aa" }}>{reinterventions.length} interventions</div>
         </div>
-        <button onClick={() => setShowForm(v => !v)}
+        <button onClick={() => { if (showForm) { setShowForm(false); setEditId(null); } else { startAdd(); } }}
           style={{ background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 9, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           + Nouvelle réintervention
         </button>
@@ -8864,7 +8888,7 @@ function Reinterventions({ reinterventions, setReinterventions }) {
 
       {showForm && (
         <Card style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", marginBottom: 14 }}>Saisie réintervention</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", marginBottom: 14 }}>{editId !== null ? "Modifier la réintervention" : "Saisie réintervention"}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10, marginBottom: 12 }}>
             <div>
               <label style={{ fontSize: 10, color: "#7a90aa", fontWeight: 600, display: "block", marginBottom: 3, textTransform: "uppercase" }}>Date *</label>
@@ -8914,8 +8938,8 @@ function Reinterventions({ reinterventions, setReinterventions }) {
               style={{ ...inp(), resize: "vertical" }} />
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={submit} style={{ background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Enregistrer</button>
-            <button onClick={() => setShowForm(false)} style={{ background: "transparent", color: "#7a90aa", border: "1px solid #3d5270", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Annuler</button>
+            <button onClick={submit} style={{ background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{editId !== null ? "Enregistrer les modifications" : "Enregistrer"}</button>
+            <button onClick={() => { setShowForm(false); setEditId(null); }} style={{ background: "transparent", color: "#7a90aa", border: "1px solid #3d5270", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Annuler</button>
           </div>
         </Card>
       )}
@@ -8935,7 +8959,11 @@ function Reinterventions({ reinterventions, setReinterventions }) {
                   <span key={a} style={{ fontSize: 10, fontWeight: 600, background: "#1d4ed822", color: "#3b82f6", border: "1px solid #3b82f644", borderRadius: 4, padding: "2px 7px" }}>{a}</span>
                 ))}
                 <Badge label={item.statut} color={SCOLOR[item.statut] || "#7a90aa"} />
-                <button onClick={e => { e.stopPropagation(); setReinterventions(prev => prev.filter(i => i.id !== item.id)); sbDelete("reinterventions", item.id); setSel(null); }}
+                <button onClick={e => { e.stopPropagation(); startEdit(item); }}
+                  style={{ background: "#1d4ed822", color: "#3b82f6", border: "1px solid #3b82f644", borderRadius: 7, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  ✎
+                </button>
+                <button onClick={e => { e.stopPropagation(); if (!window.confirm("Supprimer cette réintervention ?")) return; setReinterventions(prev => prev.filter(i => i.id !== item.id)); sbDelete("reinterventions", item.id); setSel(null); }}
                   style={{ background: "#ef444422", color: "#ef4444", border: "1px solid #ef444444", borderRadius: 7, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                   ✕
                 </button>
