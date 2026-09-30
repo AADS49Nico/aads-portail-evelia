@@ -10278,22 +10278,29 @@ function ContratDevis() {
 // RÉGLEMENTATIONS 3D — nettoyées
 // ============================================================
 function Reglementations() {
-  const FAMILLES_INIT = ["Biocides", "Certiphyto", "IFS", "Desinsectisation", "General"];
-  const STATUTS  = ["En vigueur", "Applicable", "Abroge"];
-  const FCOL_BASE = { Biocides:"#3b82f6", Certiphyto:"#8b5cf6", IFS:"#22c55e", Desinsectisation:"#f59e0b", General:"#7a90aa" };
+  const FAMILLES_INIT = ["Biocides", "Certibiocide", "Rodenticides", "Sécurité", "Alimentaire / IFS", "Normes"];
+  const STATUTS  = ["Réglementaire", "Référentiel", "Norme volontaire", "Selon AMM"];
+  const FCOL_BASE = { "Biocides":"#3b82f6", "Certibiocide":"#8b5cf6", "Rodenticides":"#ef4444", "Sécurité":"#f59e0b", "Alimentaire / IFS":"#22c55e", "Normes":"#06b6d4" };
+  const STATUT_COL = { "Réglementaire":"#22c55e", "Référentiel":"#3b82f6", "Norme volontaire":"#f59e0b", "Selon AMM":"#a855f7" };
+  function statutCol(s){ return STATUT_COL[s] || "#22c55e"; }
   const EXTRA_COLORS = ["#ef4444","#06b6d4","#f97316","#ec4899","#14b8a6","#a855f7","#84cc16","#fb923c"];
   const inpStyle = inp();
 
   const REGLEMENTS_INIT = [
-    { id:"1", ref:"Reglement UE 528/2012", titre:"Mise sur le marche des produits biocides", famille:"Biocides", statut:"En vigueur", impact:"Verification AMM SECUVIA et KRYPTO — renouvellement obligatoire avant expiration." },
-    { id:"2", ref:"Arrete du 7 fevrier 2012", titre:"Agrements et certifications — protection des vegetaux", famille:"Certiphyto", statut:"En vigueur", impact:"Certiphyto obligatoire — validite 5 ans — recyclage obligatoire." },
-    { id:"3", ref:"IFS Food v8 — Section 4.14", titre:"Lutte antiparasitaire en sites de production alimentaire", famille:"IFS", statut:"En vigueur", impact:"Plan documente, cartographie, inspections regulieres, enregistrement des resultats." },
-    { id:"4", ref:"Reglement UE 2021/1099", titre:"Approbation conditionnelle anticoagulants 2e generation", famille:"Biocides", statut:"En vigueur", impact:"Usage SECUVIA restreint aux BOBBYBOX exterieurs fermes — aucun appat libre." },
-    { id:"5", ref:"Circulaire DGS 2004-185", titre:"Lutte contre insectes vecteurs en milieu alimentaire", famille:"Desinsectisation", statut:"En vigueur", impact:"Plan de gestion et historique des traitements obligatoires." },
-    { id:"6", ref:"NF X50-790 AFNOR", titre:"Entreprises de services 3D — bonnes pratiques", famille:"General", statut:"Applicable", impact:"AADS respecte les principes de cette norme dans toutes ses prestations." },
-    { id:"7", ref:"Paquet hygiene CE 852/2004", titre:"Hygiene des denrees alimentaires", famille:"IFS", statut:"En vigueur", impact:"Applicable aux sites de production alimentaire — tracabilite obligatoire." },
-    { id:"8", ref:"Arrete du 9 octobre 2013 — Art. 6", titre:"Alternance des molecules rodenticides", famille:"Biocides", statut:"En vigueur", impact:"Obligation de rotation des matieres actives anticoagulantes. L alternance doit etre documentee." },
-    { id:"9", ref:"Arrete du 9 octobre 2013 — Art. 8", titre:"Appatage non permanent — sauf justification ecrite", famille:"Biocides", statut:"En vigueur", impact:"L appatage permanent est interdit sauf justification ecrite motivee. Postes interieurs en placebo par defaut." },
+    { id:"1",  ref:"Règlement (UE) n° 528/2012", titre:"Mise à disposition sur le marché et utilisation des produits biocides", famille:"Biocides", statut:"Réglementaire", impact:"Base de l'activité biocide : n'utiliser que des produits autorisés et respecter les usages et conditions d'emploi. L'AMM de chaque produit doit être vérifiée." },
+    { id:"2",  ref:"Code de l'environnement – art. L.522-1 à L.522-19", titre:"Autorisation et utilisation des produits biocides en France", famille:"Biocides", statut:"Réglementaire", impact:"Renvoi français au règlement biocides : conditions de mise sur le marché et d'utilisation des produits biocides en France." },
+    { id:"3",  ref:"Arrêté du 9 octobre 2013 modifié", titre:"Certibiocide nuisibles", famille:"Certibiocide", statut:"Réglementaire", impact:"Certificat individuel obligatoire pour l'application des produits biocides de lutte contre les nuisibles. Validité 5 ans (modification en vigueur depuis septembre 2025)." },
+    { id:"4",  ref:"Arrêté du 9 octobre 2013 modifié", titre:"Certibiocide désinfectants", famille:"Certibiocide", statut:"Réglementaire", impact:"Certificat individuel obligatoire pour l'utilisation professionnelle des produits désinfectants. Validité 5 ans." },
+    { id:"5",  ref:"AMM du produit biocide utilisé", titre:"Respect des usages et conditions d'emploi autorisés", famille:"Biocides", statut:"Réglementaire", impact:"Chaque produit doit être employé conformément à son AMM : usages, doses, organismes cibles et lieux d'utilisation autorisés." },
+    { id:"6",  ref:"Règlement REACH (CE) n° 1907/2006", titre:"Fiches de données de sécurité des produits", famille:"Sécurité", statut:"Réglementaire", impact:"Encadre notamment les fiches de données de sécurité (FDS) : elles doivent être disponibles et à jour pour chaque produit." },
+    { id:"7",  ref:"Règlement CLP (CE) n° 1272/2008", titre:"Étiquetage, classification et emballage des produits chimiques", famille:"Sécurité", statut:"Réglementaire", impact:"Classification, étiquetage et emballage des substances et mélanges dangereux." },
+    { id:"8",  ref:"Code du travail – R.4412-1 et suivants", titre:"Prévention du risque chimique des salariés", famille:"Sécurité", statut:"Réglementaire", impact:"S'applique aux activités où les salariés sont exposés ou susceptibles d'être exposés à des agents chimiques dangereux : évaluation et prévention du risque." },
+    { id:"9",  ref:"Code de la santé publique – R.3116-12", titre:"Dératisation, désinsectisation et utilisation de gaz toxiques", famille:"Sécurité", statut:"Réglementaire", impact:"Encadre les opérations de dératisation / désinsectisation et l'emploi de gaz toxiques." },
+    { id:"10", ref:"Règlement CE n° 852/2004", titre:"Hygiène alimentaire et maîtrise des organismes nuisibles", famille:"Alimentaire / IFS", statut:"Réglementaire", impact:"Prévoit notamment des mesures permettant une lutte efficace contre les organismes nuisibles en milieu alimentaire." },
+    { id:"11", ref:"IFS Food v8 – § 4.13", titre:"Surveillance et maîtrise des nuisibles en industrie alimentaire", famille:"Alimentaire / IFS", statut:"Référentiel", impact:"« Pest monitoring and control » : plan documenté, cartographie, inspections régulières, enregistrement des résultats." },
+    { id:"12", ref:"NF EN 16636", titre:"Services de gestion des nuisibles – exigences et compétences", famille:"Normes", statut:"Norme volontaire", impact:"Norme volontaire encadrant les exigences et compétences des prestataires de gestion des nuisibles (3D)." },
+    { id:"13", ref:"Conditions d'AMM des rodenticides utilisés", titre:"Appâtage permanent, fréquence de contrôle et conditions d'utilisation", famille:"Rodenticides", statut:"Selon AMM", impact:"Appâtage permanent, durée de traitement, fréquence de contrôle, organismes cibles et lieux d'utilisation à contrôler produit par produit selon l'AMM." },
+    { id:"14", ref:"Code de l'environnement – gestion des déchets dangereux", titre:"Gestion des produits, appâts et emballages usagés", famille:"Sécurité", statut:"Réglementaire", impact:"Tri, stockage et élimination des produits, appâts et emballages usagés selon la réglementation sur les déchets dangereux." },
   ];
 
   const [reglements, setReglements] = useState(REGLEMENTS_INIT);
@@ -10301,7 +10308,7 @@ function Reglementations() {
   const [sel, setSel]               = useState(null);
   const [showForm, setShowForm]     = useState(false);
   const [editing, setEditing]       = useState(null);
-  const [form, setForm]             = useState({ ref:"", titre:"", famille:"Biocides", statut:"En vigueur", impact:"" });
+  const [form, setForm]             = useState({ ref:"", titre:"", famille:"Biocides", statut:"Réglementaire", impact:"" });
   const [famillesList, setFamillesList] = useState(FAMILLES_INIT);
   const [newFamille, setNewFamille]     = useState("");
 
@@ -10312,7 +10319,7 @@ function Reglementations() {
     }).catch(()=>{});
   }, []);
 
-  function startAdd() { setForm({ ref:"", titre:"", famille:"Biocides", statut:"En vigueur", impact:"" }); setEditing(null); setShowForm(true); }
+  function startAdd() { setForm({ ref:"", titre:"", famille:"Biocides", statut:"Réglementaire", impact:"" }); setEditing(null); setShowForm(true); }
   function startEdit(r) { setForm({...r}); setEditing(r.id); setShowForm(true); setSel(null); }
 
   function save() {
@@ -10358,7 +10365,7 @@ function Reglementations() {
               <td style="font-weight:700;color:${fc};width:15%">${r.famille}</td>
               <td style="font-family:monospace;font-size:11px;width:20%">${r.ref}</td>
               <td style="font-weight:700;width:30%">${r.titre}</td>
-              <td style="width:10%;text-align:center;font-weight:700;color:${r.statut==="En vigueur"?"#16a34a":"#d97706"}">${r.statut}</td>
+              <td style="width:10%;text-align:center;font-weight:700;color:${statutCol(r.statut)}">${r.statut}</td>
               <td style="font-size:12px">${r.impact||""}</td>
             </tr>`;
           }).join("");
@@ -10460,7 +10467,7 @@ function Reglementations() {
                 <div style={{ fontSize:11, color:"#7a90aa", fontFamily:"monospace", marginBottom:1 }}>{r.ref}</div>
                 <div style={{ fontSize:13, fontWeight:700, color:"#f1f5f9" }}>{r.titre}</div>
               </div>
-              <Badge label={r.statut} color={r.statut==="En vigueur"?"#22c55e":"#f59e0b"}/>
+              <Badge label={r.statut} color={statutCol(r.statut)}/>
               <div style={{ display:"flex", gap:4 }} onClick={e=>e.stopPropagation()}>
                 <button onClick={()=>startEdit(r)} style={{ background:"#1d4ed822", color:"#3b82f6", border:"1px solid #3b82f644", borderRadius:5, padding:"2px 8px", fontSize:10, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Edit</button>
                 <button onClick={()=>deleteRegl(r.id)} style={{ background:"#ef444422", color:"#ef4444", border:"1px solid #ef444433", borderRadius:5, padding:"2px 6px", fontSize:10, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>X</button>
