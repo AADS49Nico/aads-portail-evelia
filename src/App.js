@@ -1623,7 +1623,9 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
   }
 
   function submitReinv() {
-    if (!form.date || !form.technicien || !form.poste) return;
+    // Seule la date est obligatoire (comme la saisie depuis un passage) : on ne
+    // bloque pas l'edition d'une reintervention existante sans poste/technicien.
+    if (!form.date) { alert("La date est obligatoire."); return; }
     // Date en JJ/MM/AAAA (format commun) et actions en JSON, comme la saisie passage.
     const dateFmt = form.date.indexOf("-") !== -1 ? form.date.split("-").reverse().join("/") : form.date;
     const champs = { date: dateFmt, technicien: form.technicien, poste: form.poste, anomalie: form.anomalie, statut: form.statut, observations: form.observations };
