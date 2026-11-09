@@ -1241,7 +1241,7 @@ async function genererFicheIntervention(p, postesTous, planActions){
     }).join("");
     return "<div style='"+H3+"'>"+titre+" — "+st.t+" touché(s) / "+st.c+" contrôlé(s) · "+st.taux+"% d'activité</div>"+
       "<table style='width:100%;border-collapse:collapse;font-size:11px'><thead><tr>"+
-      ["Poste","Zone","Macro-zone","État","Molécule","Captures"].map(h=>"<th style='background:#f1f5f9;border:1px solid #e5e7eb;padding:5px 8px;text-align:left'>"+h+"</th>").join("")+
+      ["Poste","Zone","Macro-zone","État","Molécule","Captures"].map(h=>"<th style='background:#f1f5f9;color:#0f2864;border:1px solid #e5e7eb;padding:5px 8px;text-align:left'>"+h+"</th>").join("")+
       "</tr></thead><tbody>"+rows+"</tbody></table>";
   }
 
@@ -1252,7 +1252,7 @@ async function genererFicheIntervention(p, postesTous, planActions){
     const rows = Object.keys(saisies).filter(function(id){ var s=saisies[id]||{}; var tt=CATS.reduce(function(a,c){return a+(parseInt(s["iv_"+c]||0)||0);},0); return s.vu===true||tt>0; }).map(id=>{ const s=saisies[id]||{}; const tot=CATS.reduce((a,c)=>a+(parseInt(s["iv_"+c]||0)||0),0); const po=posteById[id]||{}; return "<tr><td style='border:1px solid #e5e7eb;padding:4px 8px;font-family:monospace;font-weight:700'>"+esc(id)+"</td><td style='border:1px solid #e5e7eb;padding:4px 8px'>"+esc(po.zone||"")+"</td><td style='border:1px solid #e5e7eb;padding:4px 8px;text-align:center'>"+tot+"</td></tr>"; }).join("");
     corps = "<div style='"+H3+"'>Appareils DEIV — captures</div>"+
       "<table style='width:100%;border-collapse:collapse;font-size:11px'><thead><tr>"+
-      ["Appareil","Zone","Insectes capturés"].map(h=>"<th style='background:#f1f5f9;border:1px solid #e5e7eb;padding:5px 8px;text-align:left'>"+h+"</th>").join("")+
+      ["Appareil","Zone","Insectes capturés"].map(h=>"<th style='background:#f1f5f9;color:#0f2864;border:1px solid #e5e7eb;padding:5px 8px;text-align:left'>"+h+"</th>").join("")+
       "</tr></thead><tbody>"+rows+"</tbody></table>";
   } else {
     corps = "<div style='display:flex;gap:12px;flex-wrap:wrap;margin:14px 0'>"+
@@ -1771,7 +1771,7 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
         setPassagesSaisies(passagesGlobaux);
       }
     }).catch(()=>{});
-  }, []);
+  }, [passagesGlobaux]);
 
   const TECHNICIENS = useTechniciens();
   const ACTIONS_LIST = ["Remplacement appats","Renouvellement pieges","Pose piege supplementaire","Colmatage passage","Nettoyage poste","Inspection renforcee","Traitement curatif","Photo prise","Observation transmise"];
