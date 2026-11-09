@@ -282,7 +282,7 @@ function contratActuel() {
 // Tables du REFERENTIEL : communes à TOUS les sites (pas de filtre par contrat).
 // -> la même liste s'affiche sur les 5 sites (produits, habilitations, agréments,
 // contrats/devis, réglementations), et un ajout fait sur un site est visible partout.
-const REFERENTIEL_TABLES = ["produits_biocides","habilitations","habilitations_docs","agrements","agrements_docs","reglementations","contrats_devis"];
+const REFERENTIEL_TABLES = ["produits_biocides","produits_docs","habilitations","habilitations_docs","agrements","agrements_docs","reglementations","contrats_devis"];
 function estReferentiel(table) { return REFERENTIEL_TABLES.indexOf(String(table).split("?")[0]) !== -1; }
 async function sbGet(table, select) {
   var selPart = select ? "&select=" + select : "";
