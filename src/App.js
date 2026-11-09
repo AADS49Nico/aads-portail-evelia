@@ -271,13 +271,22 @@ async function sbFetch(path, method, body, extraHeaders) {
 // Charger les photos a part evite le statement timeout (code 57014) quand il y
 // en a beaucoup.
 const PLAN_ACTIONS_COLS = "id,contrat,site,titre,titre5m,type,priorite,zone,description,recommandation,technicien,piege_ref,statut,date_detection";
+// Contrat courant : CLIENT_CONFIG.contrat, sinon celui du site actif (SITES_CONFIG).
+// Indispensable : sur certains sites la config_client arrive APRES le 1er rendu, et
+// CLIENT_CONFIG.contrat restait vide -> requetes "contrat=eq." vides -> 0 poste.
+function contratActuel() {
+  if (CLIENT_CONFIG.contrat) return CLIENT_CONFIG.contrat;
+  if (SITE_ACTIF && SITES_CONFIG[SITE_ACTIF] && SITES_CONFIG[SITE_ACTIF].contrat) return SITES_CONFIG[SITE_ACTIF].contrat;
+  return "";
+}
 async function sbGet(table, select) {
-  // Attendre que le contrat soit charge : sinon une requete partie avant la config
-  // tourne sur un contrat vide et ne remonte rien (ecran vide au demarrage).
+  // Attendre que le contrat soit connu (CLIENT_CONFIG ou SITES_CONFIG du site actif).
   var essais = 0;
-  while (!CLIENT_CONFIG.contrat && essais < 60) { await new Promise(function(r){ setTimeout(r, 100); }); essais++; }
+  while (!contratActuel() && essais < 60) { await new Promise(function(r){ setTimeout(r, 100); }); essais++; }
+  var contrat = contratActuel();
+  if (CLIENT_CONFIG.contrat !== contrat && contrat) CLIENT_CONFIG.contrat = contrat; // resynchronise
   var selPart = select ? "&select=" + select : "";
-  var base = table + "?contrat=eq." + CLIENT_CONFIG.contrat + filtreSite(table) + selPart + "&order=id.asc";
+  var base = table + "?contrat=eq." + contrat + filtreSite(table) + selPart + "&order=id.asc";
   // Pagination : PostgREST plafonne a 1000 lignes par reponse. On boucle en
   // limit/offset pour tout recuperer (les passages recents reapparaissent).
   var out = [], offset = 0, page;
@@ -300,7 +309,7 @@ async function sbUpsert(table, data) {
   return sbFetch(table, "POST", d, { Prefer: "resolution=merge-duplicates,return=representation" });
 }
 async function sbUpdate(table, id, data) {
-  return sbFetch(table + "?id=eq." + id + "&contrat=eq." + CLIENT_CONFIG.contrat + filtreSite(table), "PATCH", data, { Prefer: "return=representation" });
+  return sbFetch(table + "?id=eq." + id + "&contrat=eq." + contratActuel() + filtreSite(table), "PATCH", data, { Prefer: "return=representation" });
 }
 // Variante stricte : leve une exception en cas d'echec HTTP reel, avec le detail de l'erreur Supabase.
 // A utiliser uniquement la ou l'appelant gere explicitement l'echec (ex: ajout de postes sur un plan).
@@ -335,7 +344,7 @@ async function sbUpsertStrict(table, data) {
   return res.json().catch(() => true);
 }
 async function sbDelete(table, id) {
-  return sbFetch(table + "?id=eq." + id + "&contrat=eq." + CLIENT_CONFIG.contrat + filtreSite(table), "DELETE");
+  return sbFetch(table + "?id=eq." + id + "&contrat=eq." + contratActuel() + filtreSite(table), "DELETE");
 }
 
 // Nettoie un nom de fichier pour le stockage Supabase : enleve les accents et
