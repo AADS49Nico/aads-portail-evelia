@@ -16055,6 +16055,17 @@ function AppPortail({ isAdmin, onLogout, aadsTheme, onToggleTheme }) {
     }).catch(() => {});
   }, [siteCourant, configVersion]);
 
+  // IMPORTANT (multi-sites) : recharger les passages à CHAQUE changement de site.
+  // Sans ça, passagesGlobaux restait figé sur le site de démarrage et se mélangeait
+  // avec le site courant (on voyait des passages d'un autre site, ex. ceux de Ballan
+  // partout). On applique toujours le résultat, même vide, pour ne jamais garder la
+  // liste d'un autre site.
+  useEffect(() => {
+    sbGet("passages").then(data => {
+      setPassagesGlobaux(Array.isArray(data) ? data : []);
+    }).catch(() => { setPassagesGlobaux([]); });
+  }, [siteCourant, configVersion]);
+
   const View = VIEWS[page] || Dashboard;
 
   // Garde-fou config : pose APRES tous les hooks (regles de React). Si la base
