@@ -407,6 +407,11 @@ function categorieForme(poste) {
   return nuisible;
 }
 
+// Un poste est "rongeur" si son nuisible n est PAS une categorie d insectes.
+// Tolerant : "Rongeurs", "Rongeurs exterieurs/interieurs", vide, casse/espaces comptent.
+const _NON_RONGEUR = { "insectes volants":1, "blattes":1, "teignes":1, "ips":1 };
+function estNuisibleRongeur(n){ var s = ((n==null?"":n)+"").trim().toLowerCase(); return s==="" ? true : !_NON_RONGEUR[s]; }
+
 // Cree l element SVG d une pastille dans la forme voulue, pour les exports.
 // Centre en (x,y), rayon r, remplissage col. Retourne un <g> a appendre au SVG.
 // Petite puce SVG (10px) dans la forme voulue, pour legendes et filtres.
@@ -4092,8 +4097,8 @@ function TauxActiviteChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
-  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
+  const postesRongeurs = postes.filter(p => estNuisibleRongeur(p.nuisible) && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
+  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>estNuisibleRongeur(p.nuisible)).map(p=>p.macro).filter(Boolean)))];
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
 
@@ -4484,8 +4489,8 @@ function CapturesChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
-  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
+  const postesRongeurs = postes.filter(p => estNuisibleRongeur(p.nuisible) && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
+  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>estNuisibleRongeur(p.nuisible)).map(p=>p.macro).filter(Boolean)))];
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
 
@@ -4733,8 +4738,8 @@ function PostesTouchesChart({ passages, postes }) {
   const pd = d => { if(!d) return new Date(0); const p=(d||"").split("/"); return p.length===3?new Date(p[2]+"-"+p[1]+"-"+p[0]):new Date(d); };
   const MOIS_LABELS = ["Jan.","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Dec"];
 
-  const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs" && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
-  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.macro).filter(Boolean)))];
+  const postesRongeurs = postes.filter(p => estNuisibleRongeur(p.nuisible) && (typeFilter==="tous" || p.type===typeFilter) && (macroFilter==="Toutes" || (p.macro||"")===macroFilter) && (produitNuFilter==="tous" || (produitNuFilter==="oui" ? !!p.produit_nu : !p.produit_nu)));
+  const macrosDispo = ["Toutes", ...Array.from(new Set(postes.filter(p=>estNuisibleRongeur(p.nuisible)).map(p=>p.macro).filter(Boolean)))];
   const totalPostes = postesRongeurs.length;
 
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
@@ -5982,7 +5987,7 @@ function ToxiquePlaceboChart({ passages, postes }) {
   const ANNEE_COLORS = ["#3b82f6","#22c55e","#f59e0b","#ef4444","#8b5cf6","#06b6d4"];
   const annees = [...new Set(passages.filter(p=>p.type!=="Insectes volants").map(p=>{ const d=pd(p.date); return d&&!isNaN(d)?d.getFullYear():null; }).filter(Boolean))].sort((a,b)=>a-b);
 
-  const postesRongeurs = postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs");
+  const postesRongeurs = postes.filter(p=>estNuisibleRongeur(p.nuisible));
 
   function buildStats(anneeFilter) {
     const passagesFiltres = passages.filter(p=>{
@@ -6155,7 +6160,7 @@ function MoleculesChart({ passages, postes }) {
   const ANNEE_COLORS = ["#3b82f6","#22c55e","#f59e0b","#ef4444","#8b5cf6","#06b6d4"];
   const BAR_COLORS = ["#8b5cf6","#3b82f6","#22c55e","#f59e0b","#ef4444","#06b6d4","#f97316","#ec4899","#84cc16","#14b8a6"];
 
-  const postesRongeurs = postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs");
+  const postesRongeurs = postes.filter(p=>estNuisibleRongeur(p.nuisible));
 
   function filterPassages(list) {
     return list.filter(p=>{
@@ -6333,7 +6338,7 @@ function Statistiques() {
     let actifs = 0, total = 0, captures = 0;
     // Taux d'activité ne porte QUE sur les postes Rongeurs, peu importe le filtre nuisible actif
     // Le total est le nombre REEL de postes rongeurs du site (pas seulement ceux saisis)
-    const postesRongeurs = postes.filter(p => (p.nuisible||"Rongeurs") === "Rongeurs");
+    const postesRongeurs = postes.filter(p => estNuisibleRongeur(p.nuisible));
     total = postesRongeurs.length;
     postesRongeurs.forEach(poste => {
       const id = poste.id;
@@ -7686,8 +7691,8 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
 
   function getPostesForType(type) {
     if (type==="Mixte") return sortPostes(postes);
-    if (type==="Rongeurs exterieurs") return sortPostes(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs" && p.type==="RE"));
-    if (type==="Rongeurs interieurs") return sortPostes(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs" && p.type==="RI"), true); // ignorer préfixe R/S
+    if (type==="Rongeurs exterieurs") return sortPostes(postes.filter(p=>estNuisibleRongeur(p.nuisible) && p.type==="RE"));
+    if (type==="Rongeurs interieurs") return sortPostes(postes.filter(p=>estNuisibleRongeur(p.nuisible) && p.type==="RI"), true); // ignorer préfixe R/S
     if (INSECTES_TYPES.includes(type)) return sortPostes(postes.filter(p=>p.nuisible===type));
     return sortPostes(postes.filter(p=>(p.nuisible||"Rongeurs")===type));
   }
@@ -8501,7 +8506,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
                   <div style={{fontSize:14,fontWeight:700,color:"#f1f5f9"}}>Saisie par poste</div>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <button onClick={()=>{
-                      const postesRI = postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs" && p.type==="RI");
+                      const postesRI = postes.filter(p=>estNuisibleRongeur(p.nuisible) && p.type==="RI");
                       setSaisies(prev=>{
                         const next = {...prev};
                         postesRI.forEach(p=>{ next[p.id] = {...(next[p.id]||{}), molecule:"Placebo"}; });
@@ -8511,7 +8516,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
                       🔵 Tout Placebo (RI)
                     </button>
                     <button onClick={()=>{
-                      const postesRE = postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs" && p.type==="RE");
+                      const postesRE = postes.filter(p=>estNuisibleRongeur(p.nuisible) && p.type==="RE");
                       setSaisies(prev=>{
                         const next = {...prev};
                         postesRE.forEach(p=>{ next[p.id] = {...(next[p.id]||{}), molecule:"Placebo"}; });
@@ -8694,7 +8699,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
         // Couleurs par molécule
         const MOL_COLORS = ["#8b5cf6","#22c55e","#f59e0b","#ef4444","#06b6d4","#f97316","#ec4899","#84cc16","#14b8a6","#a78bfa","#fb923c","#34d399"];
         const allMols = [...new Set([
-          ...postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs").map(p=>p.molecule_actuelle).filter(Boolean),
+          ...postes.filter(p=>estNuisibleRongeur(p.nuisible)).map(p=>p.molecule_actuelle).filter(Boolean),
           ...passagesData.flatMap(pa=>{ const s=typeof pa.saisies==="string"?JSON.parse(pa.saisies||"{}"):pa.saisies||{}; return Object.values(s).map(x=>x?.molecule).filter(Boolean); })
         ])];
         const getMolColor = mol => { if(!mol)return "#3d5270"; if(mol==="Placebo")return "#3b82f6"; if(/^dif/i.test(mol))return "#f59e0b"; if(/^brod/i.test(mol))return "#ef4444"; const others=allMols.filter(m=>m!=="Placebo"&&!/^dif/i.test(m)&&!/^brod/i.test(m)); const idx=others.indexOf(mol); return idx>=0?MOL_COLORS[idx%MOL_COLORS.length]:"#7a90aa"; };
@@ -8717,7 +8722,7 @@ function SaisiePassage({ seuilsGlobaux, setSeuilsGlobaux, setReinterventions, se
           return pd(a.date)-pd(b.date); // plus ancienne à gauche
         });
 
-        const postesRongeurs = sortNaturel(postes.filter(p=>(p.nuisible||"Rongeurs")==="Rongeurs"));
+        const postesRongeurs = sortNaturel(postes.filter(p=>estNuisibleRongeur(p.nuisible)));
         const postesFiltres = filterType==="RE" ? postesRongeurs.filter(p=>p.type==="RE")
                             : filterType==="RI" ? postesRongeurs.filter(p=>p.type==="RI")
                             : postesRongeurs;
