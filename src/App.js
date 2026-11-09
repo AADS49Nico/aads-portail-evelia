@@ -16268,7 +16268,7 @@ function AppPortail({ isAdmin, onLogout, aadsTheme, onToggleTheme }) {
             </div>
             </>
           )}
-          <View key={"page_" + page + "_" + siteCourant} onNav={setPage} reinterventions={reinterventions} setReinterventions={setReinterventions} seuilsGlobaux={seuilsGlobaux} setSeuilsGlobaux={setSeuilsGlobaux} passagesGlobaux={passagesGlobaux} setPassagesGlobaux={setPassagesGlobaux} onLogoClick={()=>setShowLogoEditor(v=>!v)} onParamsClick={()=>setShowParametres(true)} isAdmin={isAdmin} />
+          <View key={"page_" + page + "_" + siteCourant + "_cfg" + configVersion} onNav={setPage} reinterventions={reinterventions} setReinterventions={setReinterventions} seuilsGlobaux={seuilsGlobaux} setSeuilsGlobaux={setSeuilsGlobaux} passagesGlobaux={passagesGlobaux} setPassagesGlobaux={setPassagesGlobaux} onLogoClick={()=>setShowLogoEditor(v=>!v)} onParamsClick={()=>setShowParametres(true)} isAdmin={isAdmin} />
         </main>
       </div>
       {showParametres && <ParametresModal onClose={()=>setShowParametres(false)} />}
