@@ -943,7 +943,7 @@ export function compteSeuils(passage, postes, seuils) {
 // ============================================================
 // EXPORT PDF
 // ============================================================
-const PDF_CSS = `*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:Arial,sans-serif;font-size:11px;color:#243352;background:#fff;padding:15mm;}@page{size:A4;margin:15mm 12mm;}.page-break{page-break-before:always;}h1{font-size:18px;color:#0f2864;font-weight:800;border-bottom:3px solid #0f2864;padding-bottom:8px;margin-bottom:16px;}h2{font-size:13px;font-weight:800;color:#0f2864;border-left:4px solid #0f2864;padding-left:8px;margin:16px 0 10px;text-transform:uppercase;}table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:10px;}th{background:#0f2864;color:#fff;padding:6px 8px;text-align:left;font-size:9px;text-transform:uppercase;font-weight:700;}td{padding:5px 8px;border-bottom:1px solid #e2e8f0;}tr:nth-child(even) td{background:#f8fafc;}.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;}.green{background:#dcfce7;color:#16a34a;}.orange{background:#fef3c7;color:#d97706;}.red{background:#fee2e2;color:#dc2626;}.tot{color:#dc2626;font-weight:700;}.par{color:#d97706;font-weight:700;}.ok{color:#16a34a;}.footer{border-top:1px solid #e2e8f0;padding-top:8px;margin-top:20px;font-size:9px;color:#94a3b8;display:flex;justify-content:space-between;}.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;}.kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;text-align:center;}.kpi-v{font-size:18px;font-weight:900;color:#0f2864;}.kpi-l{font-size:9px;color:#7a90aa;margin-top:2px;}`;
+const PDF_CSS = `*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact;}html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:Arial,sans-serif;font-size:11px;color:#243352;background:#fff;padding:15mm;}@page{size:A4;margin:15mm 12mm;}.page-break{page-break-before:always;}h1{font-size:18px;color:#0f2864;font-weight:800;border-bottom:3px solid #0f2864;padding-bottom:8px;margin-bottom:16px;}h2{font-size:13px;font-weight:800;color:#0f2864;border-left:4px solid #0f2864;padding-left:8px;margin:16px 0 10px;text-transform:uppercase;}table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:10px;}th{background:#0f2864;color:#fff;padding:6px 8px;text-align:left;font-size:9px;text-transform:uppercase;font-weight:700;}td{padding:5px 8px;border-bottom:1px solid #e2e8f0;}tr:nth-child(even) td{background:#f8fafc;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;}.green{background:#dcfce7;color:#16a34a;}.orange{background:#fef3c7;color:#d97706;}.red{background:#fee2e2;color:#dc2626;}.tot{color:#dc2626;font-weight:700;}.par{color:#d97706;font-weight:700;}.ok{color:#16a34a;}.footer{border-top:1px solid #e2e8f0;padding-top:8px;margin-top:20px;font-size:9px;color:#94a3b8;display:flex;justify-content:space-between;}.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;}.kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;text-align:center;}.kpi-v{font-size:18px;font-weight:900;color:#0f2864;}.kpi-l{font-size:9px;color:#7a90aa;margin-top:2px;}`;
 
 function exportCSV(filename, headers, rows) {
   const escapeCsv = (val) => {
@@ -1179,6 +1179,10 @@ async function genererFicheIntervention(p, postesTous, planActions){
   const isDeiv = p.type==="Insectes volants";
   const H3 = "font-size:13px;color:#0f2864;border-bottom:1px solid #e5e7eb;padding-bottom:4px;margin:18px 0 8px";
 
+  // Seuils (pour colorer état/captures selon la même logique que le plan).
+  let seuilsFiche = {};
+  try { const _sd = await sbGet("seuils"); if (Array.isArray(_sd) && _sd[0] && _sd[0].data) seuilsFiche = typeof _sd[0].data==="string"?JSON.parse(_sd[0].data):_sd[0].data; } catch(_e){ seuilsFiche = {}; }
+
   // Regroupement intérieur / extérieur.
   // On parcourt TOUS les postes du site (pas seulement ceux saisis) pour que les
   // postes en RAS soient comptés : un poste sans saisie = RAS (contrôlé, sans
@@ -1220,12 +1224,20 @@ async function genererFicheIntervention(p, postesTous, planActions){
     const rows = list.map(x=>{
       const s=x.s||{}, po=x.po||{};
       const cap=_ficheCaptures(s), cons=_ficheConsomme(s);
-      const etat = (s.etat!=null && String(s.etat).trim()!=="") ? esc(s.etat) : "RAS";
-      const el = String(s.etat||"").toLowerCase();
-      const etatColor = cons ? ((el.indexOf("tot")>=0||el.indexOf("100")>=0||el.indexOf("75")>=0)?"#dc2626":"#d97706") : "#16a34a";
+      // Couleur selon les seuils (même logique que le plan) : vert/orange/rouge,
+      // en tenant compte de la consommation ET des captures.
+      const coul = couleurSeuilPoste(po, s, seuilsFiche);
+      const hex = coul==="rouge" ? "#dc2626" : (coul==="orange" ? "#d97706" : "#16a34a");
+      // État : consommation si présente, sinon "Capture" si capture (JAMAIS "RAS"
+      // sur un poste capturé), sinon "RAS".
+      let etatTxt, etatCol;
+      if (cons) { etatTxt = (s.etat!=null && String(s.etat).trim()!=="") ? esc(s.etat) : "Consommé"; etatCol = hex; }
+      else if (cap>0) { etatTxt = "Capture"; etatCol = hex; }
+      else { etatTxt = "RAS"; etatCol = "#16a34a"; }
       const mol = esc(s.molecule || po.molecule_actuelle || "—");
+      const capCell = cap>0 ? "<span style='color:"+hex+";font-weight:700'>"+cap+"</span>" : "—";
       return "<tr><td style='"+cell+";font-weight:700;font-family:monospace'>"+esc(x.id)+"</td><td style='"+cell+"'>"+esc(po.zone||"")+"</td><td style='"+cell+"'>"+esc(po.macro||"")+"</td>"+
-        "<td style='"+cell+";color:"+etatColor+";font-weight:700'>"+etat+"</td><td style='"+cell+"'>"+mol+"</td><td style='"+cell+";text-align:center'>"+(cap>0?cap:"—")+"</td></tr>";
+        "<td style='"+cell+";color:"+etatCol+";font-weight:700'>"+etatTxt+"</td><td style='"+cell+"'>"+mol+"</td><td style='"+cell+";text-align:center'>"+capCell+"</td></tr>";
     }).join("");
     return "<div style='"+H3+"'>"+titre+" — "+st.t+" touché(s) / "+st.c+" contrôlé(s) · "+st.taux+"% d'activité</div>"+
       "<table style='width:100%;border-collapse:collapse;font-size:11px'><thead><tr>"+
