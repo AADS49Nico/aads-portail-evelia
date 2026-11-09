@@ -1179,11 +1179,26 @@ async function genererFicheIntervention(p, postesTous, planActions){
   const isDeiv = p.type==="Insectes volants";
   const H3 = "font-size:13px;color:#0f2864;border-bottom:1px solid #e5e7eb;padding-bottom:4px;margin:18px 0 8px";
 
-  // Regroupement intérieur / extérieur (postes rongeurs)
+  // Regroupement intérieur / extérieur.
+  // On parcourt TOUS les postes du site (pas seulement ceux saisis) pour que les
+  // postes en RAS soient comptés : un poste sans saisie = RAS (contrôlé, sans
+  // activité). On exclut les postes DEIV (traités dans leur section dédiée).
   const grp = { int:[], ext:[] };
+  const _vus = {};
+  (postesTous||[]).forEach(po=>{
+    if(!po || po.statut==="Désactivé") return;
+    if((po.nuisible||"Rongeurs")==="Insectes volants" || po.type==="DEIV") return;
+    const s = (saisies[po.id]!=null) ? saisies[po.id] : {};
+    _vus[po.id]=true;
+    (_ficheExterieur(po)?grp.ext:grp.int).push({ id: po.id, po, s });
+  });
+  // Filet de sécurité : inclure aussi d'éventuelles saisies de postes absents de
+  // la liste des postes (anciens id), pour ne rien perdre.
   Object.keys(saisies).forEach(id=>{
+    if(_vus[id]) return;
     const s=saisies[id]; if(s==null) return;
     const po = posteById[id] || { id, zone:"", macro:"", type:"" };
+    if((po.nuisible||"Rongeurs")==="Insectes volants" || po.type==="DEIV") return;
     if(!_ficheValide(s)) return;
     (_ficheExterieur(po)?grp.ext:grp.int).push({ id, po, s });
   });
