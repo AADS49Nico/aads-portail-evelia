@@ -1055,18 +1055,26 @@ function _ficheExterieur(po){ if(!po)return false; if(po.type==="RE")return true
 function _ficheValide(s){ return !!s && (s.vu===true || s.vu==="true" || _ficheConsomme(s) || _ficheCaptures(s)>0); }
 
 // Genere et imprime (PDF navigateur) la fiche d'intervention d'un passage.
-// Pastille (forme + couleur) en SVG chaine, centree en (x,y), rayon r, pour la fiche PDF.
-function pastilleFicheHTML(forme, col, label, x, y, r){
-  r = r || 11;
-  var sw = Math.max(1.5, r*0.18);
+// Pastille IDENTIQUE a celle du portail (meme geometrie que svgPastilleForme +
+// contour cercleColor/cercleSize + label labelColor/labelSize de PASTILLE_CONFIG).
+// r = rayon ; scale = facteur d'echelle (dimensions image / 900) pour que contour
+// et label restent proportionnels comme a l'export du plan.
+function pastilleFicheHTML(forme, col, label, x, y, r, scale){
+  scale = scale || 1;
+  var PC = (typeof PASTILLE_CONFIG!=="undefined" && PASTILLE_CONFIG) ? PASTILLE_CONFIG : {};
+  var cercleCol = PC.cercleColor || "#ffffff";
+  var cercleW = ((PC.cercleSize!=null?PC.cercleSize:2)) * scale;
+  var labelCol = PC.labelColor || "#ffffff";
+  var labelBase = PC.labelSize || 7;
+  var st = "fill='"+col+"' stroke='"+cercleCol+"' stroke-width='"+cercleW+"' stroke-linejoin='round'";
   var shape;
-  if (forme==="carre") shape = "<rect x='"+(x-r)+"' y='"+(y-r)+"' width='"+(2*r)+"' height='"+(2*r)+"' rx='"+(r*0.25)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
-  else if (forme==="rect") shape = "<rect x='"+(x-r*1.5)+"' y='"+(y-r*0.8)+"' width='"+(3*r)+"' height='"+(1.6*r)+"' rx='"+(r*0.25)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
-  else if (forme==="ovale") shape = "<ellipse cx='"+x+"' cy='"+y+"' rx='"+(r*1.4)+"' ry='"+(r*0.85)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
-  else if (forme==="triangle") shape = "<polygon points='"+x+","+(y-r)+" "+(x+r)+","+(y+r*0.8)+" "+(x-r)+","+(y+r*0.8)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
-  else shape = "<circle cx='"+x+"' cy='"+y+"' r='"+r+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
-  var fs = (String(label).length>3 ? r*0.64 : r*0.82);
-  var txt = "<text x='"+x+"' y='"+(y+fs*0.35)+"' font-size='"+fs+"' fill='#fff' text-anchor='middle' font-weight='900' font-family='Arial,sans-serif'>"+String(label).replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</text>";
+  if (forme==="triangle"){ var h=r*1.7; shape="<polygon points='"+x+","+(y-h*0.55)+" "+(x+r*1.15)+","+(y+h*0.45)+" "+(x-r*1.15)+","+(y+h*0.45)+"' "+st+"/>"; }
+  else if (forme==="carre"){ shape="<rect x='"+(x-r)+"' y='"+(y-r)+"' width='"+(r*2)+"' height='"+(r*2)+"' rx='"+(2*scale)+"' "+st+"/>"; }
+  else if (forme==="rect"){ shape="<rect x='"+(x-r*1.45)+"' y='"+(y-r*0.72)+"' width='"+(r*2.9)+"' height='"+(r*1.44)+"' rx='"+(2*scale)+"' "+st+"/>"; }
+  else if (forme==="ovale"){ shape="<ellipse cx='"+x+"' cy='"+y+"' rx='"+(r*1.3)+"' ry='"+(r*0.78)+"' "+st+"/>"; }
+  else { shape="<circle cx='"+x+"' cy='"+y+"' r='"+r+"' "+st+"/>"; }
+  var fs = posteLabelFontSize(label, labelBase) * scale;
+  var txt = "<text x='"+x+"' y='"+(y+fs*0.36)+"' font-size='"+fs+"' fill='"+labelCol+"' text-anchor='middle' font-weight='900' font-family='Arial,sans-serif'>"+String(label).replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</text>";
   return shape+txt;
 }
 // Dimensions naturelles d'une image (pour caler le cadre du plan dessus).
@@ -1137,7 +1145,8 @@ async function construirePlanFiche(p, postesTous, saisies){
         // endroit (x%,y% relatifs a l'image) sans deformation ni letterbox.
         var dim = bg ? await _dimsImage(bg) : null;
         var W = (dim && dim.w) || 900, H = (dim && dim.h) || 600;
-        var rPast = Math.max(7, (((typeof PASTILLE_CONFIG!=="undefined" && PASTILLE_CONFIG && PASTILLE_CONFIG.size) ? PASTILLE_CONFIG.size : 22)/2) * (W/900));
+        var scalePast = W/900;
+        var rPast = (((typeof PASTILLE_CONFIG!=="undefined" && PASTILLE_CONFIG && PASTILLE_CONFIG.size) ? PASTILLE_CONFIG.size : 22)/2) * scalePast;
         var inner = "";
         if (bg) inner += "<image href='"+bg+"' xlink:href='"+bg+"' x='0' y='0' width='"+W+"' height='"+H+"' preserveAspectRatio='none'/>";
         var nb = 0;
@@ -1150,7 +1159,7 @@ async function construirePlanFiche(p, postesTous, saisies){
           var x = (parseFloat(pt.x)/100)*W, y=(parseFloat(pt.y)/100)*H;
           if (isNaN(x)||isNaN(y)) return;
           var forme = FORMES[categorieForme(po)]||"rond";
-          inner += pastilleFicheHTML(forme, col, pt.id, x, y, rPast); nb++;
+          inner += pastilleFicheHTML(forme, col, pt.id, x, y, rPast, scalePast); nb++;
         });
         if (nb===0 && !bg) continue;
         var titre = "Plan d'implantation" + (label?" — "+esc(label):"") + (pages.length>1?(" (page "+(pg+1)+")"):"");
@@ -1999,7 +2008,7 @@ function Interventions({ reinterventions, setReinterventions, passagesGlobaux, s
                           {reinvLiees.length} réintervention(s)
                         </span>
                       )}
-                      {(function(){var _pp=String(p.date||"").split("/");var _dd=_pp.length===3?new Date(_pp[2]+"-"+_pp[1]+"-"+_pp[0]):new Date(0);return _dd>=new Date(2026,8,1);})() && (
+                      {(function(){var _pp=String(p.date||"").split("/");var _dd=_pp.length===3?new Date(_pp[2]+"-"+_pp[1]+"-"+_pp[0]):new Date(0);return _dd>=new Date(2000,0,1);})() && (
                       <button
                         onClick={e => { e.stopPropagation(); genererFicheIntervention(p, postesTous, planActions); }}
                         title="Générer la fiche d'intervention en PDF"
