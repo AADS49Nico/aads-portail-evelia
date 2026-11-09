@@ -279,14 +279,25 @@ function contratActuel() {
   if (SITE_ACTIF && SITES_CONFIG[SITE_ACTIF] && SITES_CONFIG[SITE_ACTIF].contrat) return SITES_CONFIG[SITE_ACTIF].contrat;
   return "";
 }
+// Tables du REFERENTIEL : communes à TOUS les sites (pas de filtre par contrat).
+// -> la même liste s'affiche sur les 5 sites (produits, habilitations, agréments,
+// contrats/devis, réglementations), et un ajout fait sur un site est visible partout.
+const REFERENTIEL_TABLES = ["produits_biocides","habilitations","habilitations_docs","agrements","agrements_docs","reglementations","contrats_devis"];
+function estReferentiel(table) { return REFERENTIEL_TABLES.indexOf(String(table).split("?")[0]) !== -1; }
 async function sbGet(table, select) {
-  // Attendre que le contrat soit connu (CLIENT_CONFIG ou SITES_CONFIG du site actif).
-  var essais = 0;
-  while (!contratActuel() && essais < 60) { await new Promise(function(r){ setTimeout(r, 100); }); essais++; }
-  var contrat = contratActuel();
-  if (CLIENT_CONFIG.contrat !== contrat && contrat) CLIENT_CONFIG.contrat = contrat; // resynchronise
   var selPart = select ? "&select=" + select : "";
-  var base = table + "?contrat=eq." + contrat + filtreSite(table) + selPart + "&order=id.asc";
+  var base;
+  if (estReferentiel(table)) {
+    // Référentiel partagé : aucun filtre contrat/site.
+    base = table + "?" + (select ? "select=" + select + "&" : "") + "order=id.asc";
+  } else {
+    // Attendre que le contrat soit connu (CLIENT_CONFIG ou SITES_CONFIG du site actif).
+    var essais = 0;
+    while (!contratActuel() && essais < 60) { await new Promise(function(r){ setTimeout(r, 100); }); essais++; }
+    var contrat = contratActuel();
+    if (CLIENT_CONFIG.contrat !== contrat && contrat) CLIENT_CONFIG.contrat = contrat; // resynchronise
+    base = table + "?contrat=eq." + contrat + filtreSite(table) + selPart + "&order=id.asc";
+  }
   // Pagination : PostgREST plafonne a 1000 lignes par reponse. On boucle en
   // limit/offset pour tout recuperer (les passages recents reapparaissent).
   var out = [], offset = 0, page;
@@ -309,7 +320,7 @@ async function sbUpsert(table, data) {
   return sbFetch(table, "POST", d, { Prefer: "resolution=merge-duplicates,return=representation" });
 }
 async function sbUpdate(table, id, data) {
-  return sbFetch(table + "?id=eq." + id + "&contrat=eq." + contratActuel() + filtreSite(table), "PATCH", data, { Prefer: "return=representation" });
+  return sbFetch(table + "?id=eq." + id + (estReferentiel(table) ? "" : "&contrat=eq." + contratActuel() + filtreSite(table)), "PATCH", data, { Prefer: "return=representation" });
 }
 // Variante stricte : leve une exception en cas d'echec HTTP reel, avec le detail de l'erreur Supabase.
 // A utiliser uniquement la ou l'appelant gere explicitement l'echec (ex: ajout de postes sur un plan).
@@ -344,7 +355,7 @@ async function sbUpsertStrict(table, data) {
   return res.json().catch(() => true);
 }
 async function sbDelete(table, id) {
-  return sbFetch(table + "?id=eq." + id + "&contrat=eq." + contratActuel() + filtreSite(table), "DELETE");
+  return sbFetch(table + "?id=eq." + id + (estReferentiel(table) ? "" : "&contrat=eq." + contratActuel() + filtreSite(table)), "DELETE");
 }
 
 // Nettoie un nom de fichier pour le stockage Supabase : enleve les accents et
