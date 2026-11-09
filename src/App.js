@@ -1055,61 +1055,110 @@ function _ficheExterieur(po){ if(!po)return false; if(po.type==="RE")return true
 function _ficheValide(s){ return !!s && (s.vu===true || s.vu==="true" || _ficheConsomme(s) || _ficheCaptures(s)>0); }
 
 // Genere et imprime (PDF navigateur) la fiche d'intervention d'un passage.
-// Pastille (forme + couleur) en SVG chaine, centree en (x,y), pour la fiche PDF.
-function pastilleFicheHTML(forme, col, label, x, y){
-  var r = 11;
+// Pastille (forme + couleur) en SVG chaine, centree en (x,y), rayon r, pour la fiche PDF.
+function pastilleFicheHTML(forme, col, label, x, y, r){
+  r = r || 11;
+  var sw = Math.max(1.5, r*0.18);
   var shape;
-  if (forme==="carre") shape = "<rect x='"+(x-r)+"' y='"+(y-r)+"' width='"+(2*r)+"' height='"+(2*r)+"' rx='3' fill='"+col+"' stroke='#fff' stroke-width='2'/>";
-  else if (forme==="rect") shape = "<rect x='"+(x-r*1.5)+"' y='"+(y-r*0.8)+"' width='"+(3*r)+"' height='"+(1.6*r)+"' rx='3' fill='"+col+"' stroke='#fff' stroke-width='2'/>";
-  else if (forme==="ovale") shape = "<ellipse cx='"+x+"' cy='"+y+"' rx='"+(r*1.4)+"' ry='"+(r*0.85)+"' fill='"+col+"' stroke='#fff' stroke-width='2'/>";
-  else if (forme==="triangle") shape = "<polygon points='"+x+","+(y-r)+" "+(x+r)+","+(y+r*0.8)+" "+(x-r)+","+(y+r*0.8)+"' fill='"+col+"' stroke='#fff' stroke-width='2'/>";
-  else shape = "<circle cx='"+x+"' cy='"+y+"' r='"+r+"' fill='"+col+"' stroke='#fff' stroke-width='2'/>";
-  var fs = String(label).length>3 ? 7 : 9;
-  var txt = "<text x='"+x+"' y='"+(y+3)+"' font-size='"+fs+"' fill='#fff' text-anchor='middle' font-weight='900' font-family='Arial,sans-serif'>"+String(label).replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</text>";
+  if (forme==="carre") shape = "<rect x='"+(x-r)+"' y='"+(y-r)+"' width='"+(2*r)+"' height='"+(2*r)+"' rx='"+(r*0.25)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
+  else if (forme==="rect") shape = "<rect x='"+(x-r*1.5)+"' y='"+(y-r*0.8)+"' width='"+(3*r)+"' height='"+(1.6*r)+"' rx='"+(r*0.25)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
+  else if (forme==="ovale") shape = "<ellipse cx='"+x+"' cy='"+y+"' rx='"+(r*1.4)+"' ry='"+(r*0.85)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
+  else if (forme==="triangle") shape = "<polygon points='"+x+","+(y-r)+" "+(x+r)+","+(y+r*0.8)+" "+(x-r)+","+(y+r*0.8)+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
+  else shape = "<circle cx='"+x+"' cy='"+y+"' r='"+r+"' fill='"+col+"' stroke='#fff' stroke-width='"+sw+"'/>";
+  var fs = (String(label).length>3 ? r*0.64 : r*0.82);
+  var txt = "<text x='"+x+"' y='"+(y+fs*0.35)+"' font-size='"+fs+"' fill='#fff' text-anchor='middle' font-weight='900' font-family='Arial,sans-serif'>"+String(label).replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</text>";
   return shape+txt;
+}
+// Dimensions naturelles d'une image (pour caler le cadre du plan dessus).
+function _dimsImage(src){
+  return new Promise(function(res){
+    if (!src) { res(null); return; }
+    try { var im = new Image(); im.onload=function(){ res({w:im.naturalWidth||900, h:im.naturalHeight||600}); }; im.onerror=function(){ res(null); }; im.src=src; }
+    catch(_e){ res(null); }
+  });
 }
 
 // Construit le plan d'implantation (fond image + pastilles colorees selon les
 // seuils) en chaine HTML/SVG, pour l'integrer a la fiche PDF. Independant du DOM.
 async function construirePlanFiche(p, postesTous, saisies){
   try {
+    // Formes des postes : MEME config que le plan a l'ecran (carre, rond...).
+    // Priorite au cache local, repli sur config_logos.affichage_pastilles.
+    var formes = {};
+    try { var lf = localStorage.getItem("aads_poste_formes"); if (lf) formes = JSON.parse(lf)||{}; } catch(_e){ formes = {}; }
+    if (!formes || Object.keys(formes).length===0) {
+      try { var cl = await sbFetch("config_logos?id=eq.main","GET"); var ap = cl && cl[0] && cl[0].affichage_pastilles; if (ap && ap.formes) formes = ap.formes; } catch(_e){}
+    }
+    var FORMES = Object.assign({}, POSTE_FORMES_DEFAUT, formes||{});
+
     var seuils = {};
     try { var sd = await sbGet("seuils"); if (Array.isArray(sd) && sd[0] && sd[0].data) { seuils = typeof sd[0].data==="string"?JSON.parse(sd[0].data):sd[0].data; } } catch(_e){}
+
     var positions = [];
     try { positions = await sbGet("poste_positions"); } catch(_e){ positions = []; }
     if (!Array.isArray(positions) || positions.length===0) return "";
-    var byPlan = {};
-    positions.forEach(function(d){ var pid=d.plan_id; if(!pid) return; if(!byPlan[pid]) byPlan[pid]=[]; byPlan[pid].push({id:d.poste_id||d.id, x:d.x, y:d.y, page:d.page||0}); });
-    var planId = Object.keys(byPlan).sort(function(a,b){ return byPlan[b].length-byPlan[a].length; })[0];
-    if (!planId) return "";
-    var pts = byPlan[planId].filter(function(pt){ return (pt.page||0)===0; });
-    if (pts.length===0) pts = byPlan[planId];
-    // Fond : image du plan (chargee a part)
-    var bg = "";
+
+    // Groupe par plan puis par page.
+    var byPlanPage = {};
+    positions.forEach(function(d){ var pid=d.plan_id; if(!pid) return; var pg=d.page||0; byPlanPage[pid]=byPlanPage[pid]||{}; (byPlanPage[pid][pg]=byPlanPage[pid][pg]||[]).push({id:d.poste_id||d.id, x:d.x, y:d.y}); });
+
+    // Metadonnees (label + ordre) pour trier et titrer les plans.
+    var meta = {};
     try {
-      var rows = await sbFetch("plans?select=id,img_url,images&id=eq."+encodeURIComponent(planId)+"&contrat=eq."+CLIENT_CONFIG.contrat+filtreSite("plans"),"GET");
-      var r = rows && rows[0];
-      if (r) { var imgs=[]; try{ imgs = r.images?(typeof r.images==="string"?JSON.parse(r.images):r.images):[]; }catch(_e){ imgs=[]; } if(!Array.isArray(imgs)) imgs=[]; var f0=imgs[0]; var first = (f0&&(f0.url||f0))||r.img_url||""; bg = (typeof first==="string")?first:""; }
+      var pm = await sbFetch("plans?select=id,label,ordre&contrat=eq."+CLIENT_CONFIG.contrat+filtreSite("plans")+"&order=id.asc","GET");
+      (pm||[]).forEach(function(x){ meta[x.id] = { label:x.label||"", ordre:(x.ordre==null||x.ordre===""?9999:Number(x.ordre)) }; });
     } catch(_e){}
+    var planIds = Object.keys(byPlanPage).sort(function(a,b){ var oa=(meta[a]?meta[a].ordre:9999), ob=(meta[b]?meta[b].ordre:9999); return oa-ob || String(a).localeCompare(String(b)); });
+
     var posteById = {}; (postesTous||[]).forEach(function(po){ posteById[po.id]=po; });
-    var W=900, H=600, inner="";
-    if (bg) inner += "<image href='"+bg+"' xlink:href='"+bg+"' x='0' y='0' width='"+W+"' height='"+H+"' preserveAspectRatio='xMidYMid meet'/>";
-    var nb=0;
-    pts.forEach(function(pt){
-      var po = posteById[pt.id]; if(!po) return;
-      if (po.statut==="Désactivé") return;
-      var s = (saisies && saisies[pt.id]) || {};
-      var coul = couleurSeuilPoste(po, s, seuils);
-      var col = coul==="rouge"?"#ef4444":(coul==="orange"?"#f59e0b":"#22c55e");
-      var x = (parseFloat(pt.x)/100)*W, y=(parseFloat(pt.y)/100)*H;
-      if (isNaN(x)||isNaN(y)) return;
-      var forme = (POSTE_FORMES_DEFAUT[categorieForme(po)]||"rond");
-      inner += pastilleFicheHTML(forme, col, pt.id, x, y); nb++;
-    });
-    if (nb===0 && !bg) return "";
+    var W=900, H=600;
     var H3b = "font-size:13px;color:#0f2864;border-bottom:1px solid #e5e7eb;padding-bottom:4px;margin:18px 0 8px";
-    return "<div style='"+H3b+"'>Plan d'implantation</div>"+
-      "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 "+W+" "+H+"' style='width:100%;display:block;background:#fff;border:1px solid #e5e7eb;border-radius:6px'>"+inner+"</svg>";
+    var esc = function(t){ return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); };
+    var out = "";
+
+    for (var i=0; i<planIds.length; i++){
+      var planId = planIds[i];
+      // Images de CE plan (une par page), chargees a la demande.
+      var images = [], imgUrl = "";
+      try {
+        var rows = await sbFetch("plans?select=id,img_url,images&id=eq."+encodeURIComponent(planId)+"&contrat=eq."+CLIENT_CONFIG.contrat+filtreSite("plans"),"GET");
+        var r = rows && rows[0];
+        if (r) {
+          imgUrl = r.img_url||"";
+          try { var raw = r.images?(typeof r.images==="string"?JSON.parse(r.images):r.images):[]; if(Array.isArray(raw)) images = raw.map(function(it){ return (it&&typeof it==="object")?(it.url||""):(it||""); }); } catch(_e){}
+        }
+      } catch(_e){}
+      var label = (meta[planId] && meta[planId].label) || "";
+      var pages = Object.keys(byPlanPage[planId]).map(Number).sort(function(a,b){ return a-b; });
+      for (var pgi=0; pgi<pages.length; pgi++){
+        var pg = pages[pgi];
+        var bg = images[pg] || (pg===0 ? (images[0]||imgUrl) : "");
+        // Cadre cale sur les dimensions reelles de l'image -> pastilles au bon
+        // endroit (x%,y% relatifs a l'image) sans deformation ni letterbox.
+        var dim = bg ? await _dimsImage(bg) : null;
+        var W = (dim && dim.w) || 900, H = (dim && dim.h) || 600;
+        var rPast = Math.max(7, (((typeof PASTILLE_CONFIG!=="undefined" && PASTILLE_CONFIG && PASTILLE_CONFIG.size) ? PASTILLE_CONFIG.size : 22)/2) * (W/900));
+        var inner = "";
+        if (bg) inner += "<image href='"+bg+"' xlink:href='"+bg+"' x='0' y='0' width='"+W+"' height='"+H+"' preserveAspectRatio='none'/>";
+        var nb = 0;
+        byPlanPage[planId][pg].forEach(function(pt){
+          var po = posteById[pt.id]; if(!po) return;
+          if (po.statut==="Désactivé") return;
+          var s = (saisies && saisies[pt.id]) || {};
+          var coul = couleurSeuilPoste(po, s, seuils);
+          var col = coul==="rouge"?"#ef4444":(coul==="orange"?"#f59e0b":"#22c55e");
+          var x = (parseFloat(pt.x)/100)*W, y=(parseFloat(pt.y)/100)*H;
+          if (isNaN(x)||isNaN(y)) return;
+          var forme = FORMES[categorieForme(po)]||"rond";
+          inner += pastilleFicheHTML(forme, col, pt.id, x, y, rPast); nb++;
+        });
+        if (nb===0 && !bg) continue;
+        var titre = "Plan d'implantation" + (label?" — "+esc(label):"") + (pages.length>1?(" (page "+(pg+1)+")"):"");
+        out += "<div style='"+H3b+"'>"+titre+"</div>"+
+          "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 "+W+" "+H+"' style='width:100%;display:block;background:#fff;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:12px'>"+inner+"</svg>";
+      }
+    }
+    return out;
   } catch(_e){ return ""; }
 }
 
